@@ -1,0 +1,403 @@
+// src/screens/PaywallScreen.jsx
+import React, { useRef, useEffect } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Animated,
+  Dimensions,
+  Alert,
+} from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
+import { useSubscription } from "../context/SubscriptionContext";
+
+const { width } = Dimensions.get("window");
+
+const FEATURES = [
+  { icon: "♾️", text: "Sınırsız kelime öğrenme", premium: true },
+  { icon: "🔄", text: "Aralıklı tekrar algoritması", premium: true },
+  { icon: "📊", text: "Detaylı ilerleme istatistikleri", premium: true },
+  { icon: "✏️", text: "Özel kelime ekleme", premium: true },
+  { icon: "🎯", text: "Kişiselleştirilmiş öğrenme planı", premium: true },
+  { icon: "🔔", text: "Akıllı tekrar hatırlatıcıları", premium: true },
+];
+
+const PLANS = [
+  {
+    id: "monthly",
+    label: "Aylık",
+    price: "₺99",
+    period: "/ay",
+    savings: null,
+    isPopular: false,
+  },
+  {
+    id: "yearly",
+    label: "Yıllık",
+    price: "₺599",
+    period: "/yıl",
+    savings: "%50 tasarruf",
+    isPopular: true,
+  },
+];
+
+export default function PaywallScreen({ navigation }) {
+  const { state: subState, actions: subActions } = useSubscription();
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(40)).current;
+  const [selectedPlan, setSelectedPlan] = React.useState("yearly");
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        tension: 70,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const handleSubscribe = () => {
+    // Gerçek ödeme entegrasyonu için buraya RevenueCat veya Stripe eklenebilir
+    Alert.alert(
+      "Premium'a Geç",
+      `${
+        selectedPlan === "monthly" ? "Aylık ₺99" : "Yıllık ₺599"
+      } planına abone olmak istediğinden emin misin?`,
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: "Devam Et",
+          onPress: async () => {
+            await subActions.upgradeToPremium();
+            Alert.alert(
+              "Premium Aktif!",
+              "Premium uyeligin aktif edildi. Sinırsiz ogrenmenin tadini cikar!",
+              [{ text: "Harika!", onPress: () => navigation.goBack() }]
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRestore = () => {
+    Alert.alert(
+      "Satın Alımı Geri Yükle",
+      "Önceki satın alımlarınız kontrol ediliyor...",
+      [{ text: "Tamam" }]
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Close */}
+      <TouchableOpacity
+        style={styles.closeButton}
+        onPress={() => navigation.goBack()}
+      >
+        <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+      </TouchableOpacity>
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+      >
+        {/* Hero */}
+        <Animated.View
+          style={[
+            styles.hero,
+            { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+          ]}
+        >
+          <View style={styles.heroIconWrapper}>
+            <LinearGradient
+              colors={[COLORS.accent, COLORS.accentDark]}
+              style={styles.heroIconGradient}
+            >
+              <Text style={styles.heroIcon}>✨</Text>
+            </LinearGradient>
+          </View>
+          <Text style={styles.heroTitle}>Da Vinci Premium</Text>
+          <Text style={styles.heroSubtitle}>
+            {subState.isTrialExpired
+              ? "Deneme süren bitti, öğrenmeye devam etmek için premium'a geç"
+              : `${subState.trialDaysLeft} günlük deneme sürüyor — Premium'un tüm özelliklerine bak`}
+          </Text>
+        </Animated.View>
+
+        {/* Features */}
+        <Animated.View style={[styles.featuresSection, { opacity: fadeAnim }]}>
+          {FEATURES.map((f, i) => (
+            <View key={i} style={styles.featureRow}>
+              <View style={styles.featureIconBox}>
+                <Text style={styles.featureIcon}>{f.icon}</Text>
+              </View>
+              <Text style={styles.featureText}>{f.text}</Text>
+              <Ionicons
+                name="checkmark-circle"
+                size={20}
+                color={COLORS.success}
+              />
+            </View>
+          ))}
+        </Animated.View>
+
+        {/* Plans */}
+        <Animated.View style={[styles.plansSection, { opacity: fadeAnim }]}>
+          <Text style={styles.plansTitle}>Plan Seç</Text>
+          {PLANS.map((plan) => (
+            <TouchableOpacity
+              key={plan.id}
+              style={[
+                styles.planCard,
+                selectedPlan === plan.id && styles.planCardSelected,
+                plan.isPopular && styles.planCardPopular,
+              ]}
+              onPress={() => setSelectedPlan(plan.id)}
+              activeOpacity={0.85}
+            >
+              {plan.isPopular && (
+                <View style={styles.popularBadge}>
+                  <Text style={styles.popularBadgeText}>En Çok Seçilen</Text>
+                </View>
+              )}
+              <View style={styles.planRow}>
+                <View
+                  style={[
+                    styles.planRadio,
+                    selectedPlan === plan.id && styles.planRadioSelected,
+                  ]}
+                >
+                  {selectedPlan === plan.id && (
+                    <View style={styles.planRadioDot} />
+                  )}
+                </View>
+                <View style={styles.planInfo}>
+                  <Text style={styles.planLabel}>{plan.label}</Text>
+                  {plan.savings && (
+                    <Text style={styles.planSavings}>{plan.savings}</Text>
+                  )}
+                </View>
+                <View style={styles.planPriceCol}>
+                  <Text
+                    style={[
+                      styles.planPrice,
+                      selectedPlan === plan.id && { color: COLORS.accent },
+                    ]}
+                  >
+                    {plan.price}
+                  </Text>
+                  <Text style={styles.planPeriod}>{plan.period}</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </Animated.View>
+
+        {/* Subscribe Button */}
+        <TouchableOpacity
+          style={styles.subscribeButton}
+          onPress={handleSubscribe}
+          activeOpacity={0.9}
+        >
+          <LinearGradient
+            colors={[COLORS.accent, COLORS.accentDark]}
+            style={styles.subscribeGradient}
+          >
+            <Text style={styles.subscribeText}>Premium'a Geç →</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        {/* Fine print */}
+        <Text style={styles.finePrint}>
+          İstediğin zaman iptal edebilirsin. Ödeme App Store / Google Play
+          üzerinden gerçekleşir.
+        </Text>
+
+        <TouchableOpacity onPress={handleRestore} style={styles.restoreButton}>
+          <Text style={styles.restoreText}>Satın Alımı Geri Yükle</Text>
+        </TouchableOpacity>
+
+        <View style={{ height: SPACING.xxxl }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.background },
+  closeButton: {
+    position: "absolute",
+    top: 56,
+    right: SPACING.lg,
+    zIndex: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.backgroundCard,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  scroll: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xxl },
+
+  hero: { alignItems: "center", gap: SPACING.md, paddingBottom: SPACING.xl },
+  heroIconWrapper: {
+    borderRadius: RADIUS.xl,
+    overflow: "hidden",
+    ...SHADOWS.accent,
+  },
+  heroIconGradient: {
+    width: 80,
+    height: 80,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: RADIUS.xl,
+  },
+  heroIcon: { fontSize: 40 },
+  heroTitle: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.xxxl,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  heroSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZES.md,
+    textAlign: "center",
+    lineHeight: 24,
+  },
+
+  featuresSection: {
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: SPACING.md,
+  },
+  featureRow: { flexDirection: "row", alignItems: "center", gap: SPACING.md },
+  featureIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.backgroundCardLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  featureIcon: { fontSize: 18 },
+  featureText: { flex: 1, color: COLORS.textPrimary, fontSize: FONT_SIZES.md },
+
+  plansSection: { marginBottom: SPACING.xl },
+  plansTitle: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.lg,
+    fontWeight: "700",
+    marginBottom: SPACING.md,
+  },
+  planCard: {
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.sm,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    overflow: "visible",
+  },
+  planCardSelected: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentGlow,
+  },
+  planCardPopular: { borderColor: COLORS.accent + "60" },
+  popularBadge: {
+    position: "absolute",
+    top: -12,
+    left: SPACING.lg,
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+  },
+  popularBadgeText: {
+    color: "#fff",
+    fontSize: FONT_SIZES.xs,
+    fontWeight: "700",
+  },
+  planRow: { flexDirection: "row", alignItems: "center", gap: SPACING.md },
+  planRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  planRadioSelected: { borderColor: COLORS.accent },
+  planRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.accent,
+  },
+  planInfo: { flex: 1 },
+  planLabel: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.lg,
+    fontWeight: "700",
+  },
+  planSavings: {
+    color: COLORS.success,
+    fontSize: FONT_SIZES.xs,
+    fontWeight: "700",
+    backgroundColor: COLORS.successGlow,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.sm,
+    alignSelf: "flex-start",
+    marginTop: 2,
+  },
+  planPriceCol: { alignItems: "flex-end" },
+  planPrice: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.xxl,
+    fontWeight: "800",
+  },
+  planPeriod: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
+
+  subscribeButton: {
+    borderRadius: RADIUS.full,
+    overflow: "hidden",
+    ...SHADOWS.accent,
+    marginBottom: SPACING.lg,
+  },
+  subscribeGradient: { paddingVertical: SPACING.lg, alignItems: "center" },
+  subscribeText: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "800" },
+
+  finePrint: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZES.xs,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  restoreButton: { alignItems: "center", paddingVertical: SPACING.md },
+  restoreText: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZES.sm,
+    textDecoration: "underline",
+  },
+});
