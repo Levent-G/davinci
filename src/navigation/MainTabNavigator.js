@@ -2,6 +2,7 @@
 import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { View, Text, StyleSheet, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS, FONT_SIZES } from "../utils/theme";
 import HomeScreen from "../screens/HomeScreen";
@@ -50,13 +51,18 @@ const SCREENS = {
 };
 
 export default function MainTabNavigator() {
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 8 : 0);
+
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [
+          styles.tabBar,
+          { height: 58 + bottomPad, paddingBottom: bottomPad + 4 },
+        ],
         tabBarShowLabel: true,
-        tabBarLabelStyle: styles.tabLabel,
         tabBarActiveTintColor: COLORS.accent,
         tabBarInactiveTintColor: COLORS.textMuted,
         tabBarItemStyle: styles.tabItem,
@@ -68,7 +74,6 @@ export default function MainTabNavigator() {
           name={tab.name}
           component={SCREENS[tab.name]}
           options={{
-            tabBarLabel: tab.label,
             tabBarIcon: ({ color, focused }) =>
               tab.isSpecial ? (
                 <View
@@ -125,8 +130,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.backgroundCard,
     borderTopColor: COLORS.border,
     borderTopWidth: 1,
-    height: Platform.OS === "ios" ? 84 : 62,
-    paddingBottom: Platform.OS === "ios" ? 18 : 6,
     paddingTop: 6,
     elevation: 20,
     shadowColor: "#000",

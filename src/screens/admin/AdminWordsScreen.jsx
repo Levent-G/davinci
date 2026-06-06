@@ -393,42 +393,44 @@ export default function AdminWordsScreen({ navigation }) {
 
             {/* Seviye seçici */}
             <Text style={styles.fieldLabel}>Seviye</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ marginBottom: SPACING.md }}
+            <View
+              style={{
+                flexDirection: "row",
+                flexWrap: "wrap",
+                gap: SPACING.sm,
+                marginBottom: SPACING.md,
+              }}
             >
-              <View
-                style={{
-                  flexDirection: "row",
-                  gap: SPACING.sm,
-                  paddingVertical: 4,
-                }}
-              >
-                {LEVELS.map((l) => (
-                  <TouchableOpacity
-                    key={l}
+              {LEVELS.map((l) => (
+                <TouchableOpacity
+                  key={l}
+                  style={[
+                    styles.levelChipLarge,
+                    form.level === l && {
+                      backgroundColor: LEVEL_COLORS[l] + "30",
+                      borderColor: LEVEL_COLORS[l],
+                      borderWidth: 2,
+                    },
+                  ]}
+                  onPress={() => setForm((p) => ({ ...p, level: l }))}
+                  activeOpacity={0.7}
+                >
+                  <Text
                     style={[
-                      styles.levelChip,
-                      form.level === l && {
-                        backgroundColor: LEVEL_COLORS[l] + "25",
-                        borderColor: LEVEL_COLORS[l],
+                      styles.levelChipTextLarge,
+                      {
+                        color:
+                          form.level === l
+                            ? LEVEL_COLORS[l]
+                            : COLORS.textSecondary,
                       },
                     ]}
-                    onPress={() => setForm((p) => ({ ...p, level: l }))}
                   >
-                    <Text
-                      style={[
-                        styles.levelChipText,
-                        form.level === l && { color: LEVEL_COLORS[l] },
-                      ]}
-                    >
-                      {l}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
+                    {l}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
             <Field
               label="Örnek Cümle (EN)"
@@ -597,6 +599,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  levelChipLarge: {
+    width: 72,
+    height: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  levelChipTextLarge: { fontWeight: "800", fontSize: FONT_SIZES.md },
   levelChipText: {
     color: COLORS.textSecondary,
     fontWeight: "700",

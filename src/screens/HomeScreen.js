@@ -351,13 +351,13 @@ function DailyStat({ icon, value, label, color }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  scroll: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm },
+  scroll: { paddingHorizontal: SPACING.lg, paddingTop: 4 },
 
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: SPACING.lg,
+    marginBottom: SPACING.sm,
   },
   greeting: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm },
   headerTitle: {
