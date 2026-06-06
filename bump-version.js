@@ -1,38 +1,45 @@
 // bump-version.js — proje kök dizinine koy
 // Kullanım: node bump-version.js
-// Her çalıştırmada versionCode +1, version patch +1 yapar
+// app.json VE android/app/build.gradle'ı aynı anda günceller
 
 const fs = require("fs");
 const path = require("path");
 
+// ── app.json güncelle ──────────────────────────────────────────
 const appJsonPath = path.join(__dirname, "app.json");
 const appJson = JSON.parse(fs.readFileSync(appJsonPath, "utf8"));
 
-const expo = appJson.expo;
+const currentVersion = appJson.expo.version || "1.0.0";
+const currentCode = appJson.expo.android?.versionCode || 1;
 
-// Mevcut değerleri al
-const currentVersion = expo.version || "1.0.0"; // "1.0.3"
-const currentCode = expo.android?.versionCode || 1; // 3
-
-// versionCode +1
 const newCode = currentCode + 1;
-
-// version patch +1  (1.0.3 -> 1.0.4)
 const parts = currentVersion.split(".");
 parts[2] = String(parseInt(parts[2] || "0") + 1);
 const newVersion = parts.join(".");
 
-// Güncelle
-expo.version = newVersion;
-if (!expo.android) expo.android = {};
-expo.android.versionCode = newCode;
+appJson.expo.version = newVersion;
+if (!appJson.expo.android) appJson.expo.android = {};
+appJson.expo.android.versionCode = newCode;
 
 fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2));
 
-console.log(`✅ Versiyon güncellendi:`);
+// ── build.gradle güncelle ──────────────────────────────────────
+const gradlePath = path.join(__dirname, "android", "app", "build.gradle");
+let gradle = fs.readFileSync(gradlePath, "utf8");
+
+gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${newCode}`);
+gradle = gradle.replace(/versionName\s+"[^"]+"/, `versionName "${newVersion}"`);
+
+fs.writeFileSync(gradlePath, gradle);
+
+// ── Sonuç ──────────────────────────────────────────────────────
+console.log("✅ Versiyon güncellendi:");
 console.log(`   version:     ${currentVersion} → ${newVersion}`);
 console.log(`   versionCode: ${currentCode} → ${newCode}`);
-console.log(`\n🔨 Şimdi build al:`);
+console.log("   → app.json ✓");
+console.log("   → android/app/build.gradle ✓");
+console.log("\n🔨 Şimdi build al:");
+console.log("   cd android");
 console.log(
-  `   cd android && .\\gradlew.bat bundleRelease -x lintVitalReportRelease -x lintVitalAnalyzeRelease -x lintVitalRelease`
+  "   .\\gradlew.bat bundleRelease -x lintVitalReportRelease -x lintVitalAnalyzeRelease -x lintVitalRelease"
 );
