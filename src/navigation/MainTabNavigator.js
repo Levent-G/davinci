@@ -52,20 +52,44 @@ const SCREENS = {
 
 export default function MainTabNavigator() {
   const insets = useSafeAreaInsets();
-  const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 8 : 0);
+
+  // Android gesture nav bar genellikle 24-48dp — minimum 16 garantile
+  // iOS home indicator genellikle 34 — minimum 20 garantile
+  const safeBottom = Platform.select({
+    ios: Math.max(insets.bottom, 20),
+    android: Math.max(insets.bottom, 16),
+    default: Math.max(insets.bottom, 16),
+  });
+
+  const TAB_ICON_AREA = 52; // ikon + label yüksekliği
+  const tabBarHeight = TAB_ICON_AREA + safeBottom;
 
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarStyle: [
-          styles.tabBar,
-          { height: 58 + bottomPad, paddingBottom: bottomPad + 4 },
-        ],
+        tabBarStyle: {
+          backgroundColor: COLORS.backgroundCard,
+          borderTopColor: COLORS.border,
+          borderTopWidth: 1,
+          elevation: 20,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 12,
+          // KESİN ÇÖZÜM: height + paddingBottom safeBottom ile
+          height: tabBarHeight,
+          paddingBottom: safeBottom,
+          paddingTop: 6,
+          // position absolute kaldırıldı — native flow kullan
+        },
         tabBarShowLabel: true,
         tabBarActiveTintColor: COLORS.accent,
         tabBarInactiveTintColor: COLORS.textMuted,
         tabBarItemStyle: styles.tabItem,
+        // React Navigation'ın kendi safe area hesabını KAPAT
+        // biz manuel yönetiyoruz
+        tabBarSafeAreaInsets: { bottom: 0 },
       }}
     >
       {TABS.map((tab) => (
@@ -126,17 +150,6 @@ export default function MainTabNavigator() {
 }
 
 const styles = StyleSheet.create({
-  tabBar: {
-    backgroundColor: COLORS.backgroundCard,
-    borderTopColor: COLORS.border,
-    borderTopWidth: 1,
-    paddingTop: 6,
-    elevation: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-  },
   tabItem: { paddingTop: 4, gap: 2 },
   iconWrapper: {
     width: 36,
