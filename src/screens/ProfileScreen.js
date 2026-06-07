@@ -24,9 +24,6 @@ import {
   cancelAllNotifications,
 } from "../utils/notifications";
 
-const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
-const SESSION_SIZES = [3, 5, 7, 10];
-
 export default function ProfileScreen({ navigation }) {
   const { state, actions } = useApp();
   const { state: subState, actions: subActions } = useSubscription();
@@ -103,7 +100,8 @@ export default function ProfileScreen({ navigation }) {
             <View style={styles.userInfo}>
               <Text style={styles.userName}>{user?.name || "Öğrenci"}</Text>
               <Text style={styles.userLevel}>
-                Seviye: {settings.preferredLevel}
+                Seviye: {settings.preferredLevel || "A1"} • Sistem tarafından
+                belirlenir
               </Text>
               <Text style={styles.userJoined}>
                 Katılım:{" "}
@@ -171,69 +169,9 @@ export default function ProfileScreen({ navigation }) {
           )}
         </View>
 
-        {/* Learning Settings */}
+        {/* Learning Settings — sadece günlük hedef */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Öğrenme Ayarları</Text>
-
-          {/* Preferred Level */}
-          <View style={styles.settingCard}>
-            <Text style={styles.settingLabel}>Tercih Edilen Seviye</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ marginTop: SPACING.sm }}
-            >
-              <View style={{ flexDirection: "row", gap: SPACING.sm }}>
-                {LEVELS.map((lvl) => (
-                  <TouchableOpacity
-                    key={lvl}
-                    style={[
-                      styles.levelChip,
-                      settings.preferredLevel === lvl && styles.levelChipActive,
-                    ]}
-                    onPress={() => handleUpdateSetting("preferredLevel", lvl)}
-                  >
-                    <Text
-                      style={[
-                        styles.levelChipText,
-                        settings.preferredLevel === lvl &&
-                          styles.levelChipTextActive,
-                      ]}
-                    >
-                      {lvl}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
-          </View>
-
-          {/* Session Size */}
-          <View style={styles.settingCard}>
-            <Text style={styles.settingLabel}>Oturum Kelime Sayısı</Text>
-            <View style={styles.sessionSizeRow}>
-              {SESSION_SIZES.map((size) => (
-                <TouchableOpacity
-                  key={size}
-                  style={[
-                    styles.sizeChip,
-                    settings.sessionSize === size && styles.sizeChipActive,
-                  ]}
-                  onPress={() => handleUpdateSetting("sessionSize", size)}
-                >
-                  <Text
-                    style={[
-                      styles.sizeChipText,
-                      settings.sessionSize === size &&
-                        styles.sizeChipTextActive,
-                    ]}
-                  >
-                    {size}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
 
           {/* Daily Goal */}
           <View style={[styles.settingCard, styles.settingRow]}>
@@ -519,11 +457,6 @@ const styles = StyleSheet.create({
   levelChipText: { color: COLORS.textSecondary, fontWeight: "700" },
   levelChipTextActive: { color: COLORS.accent },
 
-  sessionSizeRow: {
-    flexDirection: "row",
-    gap: SPACING.sm,
-    marginTop: SPACING.sm,
-  },
   sizeChip: {
     flex: 1,
     paddingVertical: SPACING.sm,

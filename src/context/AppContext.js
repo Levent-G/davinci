@@ -222,6 +222,27 @@ export function AppProvider({ children }) {
       await Storage.saveCustomWords(updated);
     },
 
+    // Tek kelime öğrenildiğinde çağrılır (biliyorum butonu)
+    recordWordLearned: async () => {
+      const today = new Date().toDateString();
+      const dailyStats = { ...(state.stats.dailyStats || {}) };
+      dailyStats[today] = {
+        wordsLearned: (dailyStats[today]?.wordsLearned || 0) + 1,
+        sessionsCompleted: dailyStats[today]?.sessionsCompleted || 0,
+        date: today,
+      };
+      const newStreak = calculateStreak({ dailyStats });
+      const updatedStats = {
+        ...state.stats,
+        dailyStats,
+        totalWordsLearned: (state.stats.totalWordsLearned || 0) + 1,
+        streak: newStreak,
+        longestStreak: Math.max(state.stats.longestStreak || 0, newStreak),
+      };
+      dispatch({ type: "UPDATE_STATS", payload: updatedStats });
+      await Storage.updateStats(updatedStats);
+    },
+
     recordSessionComplete: async (wordsLearned) => {
       const today = new Date().toDateString();
       const dailyStats = { ...(state.stats.dailyStats || {}) };

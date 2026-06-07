@@ -21,13 +21,13 @@ const TABS = [
     iconOutline: "home-outline",
   },
   { name: "Learn", label: "Öğren", icon: "book", iconOutline: "book-outline" },
-  {
-    name: "AI",
-    label: "AI",
-    icon: "sparkles",
-    iconOutline: "sparkles-outline",
-    isSpecial: true,
-  },
+  // {
+  //   name: "AI",
+  //   label: "AI",
+  //   icon: "sparkles",
+  //   iconOutline: "sparkles-outline",
+  //   isSpecial: true,
+  // },
   {
     name: "Stats",
     label: "İstatistik",

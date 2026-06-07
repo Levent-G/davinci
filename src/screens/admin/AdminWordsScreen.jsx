@@ -4,72 +4,48 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   TextInput,
-  Modal,
-  ScrollView,
   Alert,
   ActivityIndicator,
-  Image,
+  FlatList,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../../utils/theme";
-import {
-  getFirestoreWords,
-  addFirestoreWord,
-  updateFirestoreWord,
-  deleteFirestoreWord,
-  updateWordImage,
-  seedWordsToFirestore,
-} from "../../services/firebase";
 import { ALL_WORDS } from "../../data/wordDatabase";
-
-import firestore from "@react-native-firebase/firestore";
+import { seedWordsToFirebase } from "../../services/seedFirebase";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const LEVEL_COLORS = {
-  A1: COLORS.levelA1,
-  A2: COLORS.levelA2,
-  B1: COLORS.levelB1,
-  B2: COLORS.levelB2,
-  C1: COLORS.levelC1,
-  C2: COLORS.levelC2,
-};
-
-const EMPTY_FORM = {
-  word: "",
-  translation: "",
-  phonetic: "",
-  level: "A1",
-  example: "",
-  exampleTr: "",
-  hint: "",
-  memoryTip: "",
-  imageUrl: "",
+  A1: "#4ECDC4",
+  A2: "#45B7D1",
+  B1: "#96C93D",
+  B2: "#F9CA24",
+  C1: "#F0932B",
+  C2: "#E17055",
 };
 
 export default function AdminWordsScreen({ navigation }) {
-  const [words, setWords] = useState([]);
-  const [filtered, setFiltered] = useState([]);
+  const [selectedLevel, setSelectedLevel] = useState("A1");
   const [search, setSearch] = useState("");
-  const [levelFilter, setLevel] = useState("ALL");
-  const [loading, setLoading] = useState(true);
-  const [modalVisible, setModal] = useState(false);
-  const [editWord, setEditWord] = useState(null); // null = yeni kelime
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
-  const [source, setSource] = useState("firestore"); // 'firestore' | 'local'
-
   const [seeding, setSeeding] = useState(false);
   const [seedProgress, setSeedProgress] = useState(0);
 
-  // 3) Fonksiyonu ekle:
+  const filtered = ALL_WORDS.filter((w) => {
+    const matchLevel = w.level === selectedLevel;
+    const matchSearch =
+      search.trim() === "" ||
+      w.word.toLowerCase().includes(search.toLowerCase()) ||
+      w.translation.toLowerCase().includes(search.toLowerCase());
+    return matchLevel && matchSearch;
+  });
+
   const handleSeedFirebase = async () => {
     Alert.alert(
-      "Firebase Seed",
-      `${ALL_WORDS.length} kelime Firebase\'e yüklenecek. Devam?`,
+      "🔥 Firebase Seed",
+      `${ALL_WORDS.length} kelime Firebase'e yüklenecek. Devam?`,
       [
         { text: "İptal", style: "cancel" },
         {
@@ -77,197 +53,22 @@ export default function AdminWordsScreen({ navigation }) {
           onPress: async () => {
             setSeeding(true);
             setSeedProgress(0);
-            try {
-              const BATCH_SIZE = 490;
-              const total = ALL_WORDS.length;
-              let uploaded = 0;
-
-              for (let i = 0; i < total; i += BATCH_SIZE) {
-                const batch = firestore().batch();
-                const chunk = ALL_WORDS.slice(i, i + BATCH_SIZE);
-
-                chunk.forEach((word) => {
-                  const ref = firestore().collection("words").doc(word.id);
-                  batch.set(ref, {
-                    ...word,
-                    createdAt: firestore.FieldValue.serverTimestamp(),
-                    masteryLevel: 0,
-                    timesShown: 0,
-                    timesCorrect: 0,
-                  });
-                });
-
-                await batch.commit();
-                uploaded += chunk.length;
-                setSeedProgress(Math.round((uploaded / total) * 100));
-              }
-
-              Alert.alert(
-                "✅ Başarılı!",
-                `${total} kelime Firebase\'e yüklendi!`
-              );
-            } catch (err) {
-              Alert.alert("❌ Hata", err.message);
-            } finally {
-              setSeeding(false);
-              setSeedProgress(0);
-            }
+            const result = await seedWordsToFirebase((done, total) => {
+              setSeedProgress(Math.round((done / total) * 100));
+            });
+            setSeeding(false);
+            setSeedProgress(0);
+            Alert.alert(
+              result.success ? "✅ Başarılı!" : "❌ Hata",
+              result.success
+                ? `${result.count} kelime Firebase'e yüklendi!`
+                : result.error
+            );
           },
         },
       ]
     );
   };
-
-  useEffect(() => {
-    loadWords();
-  }, [source]);
-
-  useEffect(() => {
-    let result = words;
-    if (levelFilter !== "ALL")
-      result = result.filter((w) => w.level === levelFilter);
-    if (search.trim())
-      result = result.filter(
-        (w) =>
-          w.word.toLowerCase().includes(search.toLowerCase()) ||
-          w.translation.toLowerCase().includes(search.toLowerCase())
-      );
-    setFiltered(result);
-  }, [words, search, levelFilter]);
-
-  const loadWords = async () => {
-    setLoading(true);
-    if (source === "local") {
-      setWords(ALL_WORDS);
-    } else {
-      const fw = await getFirestoreWords();
-      setWords(fw.length > 0 ? fw : ALL_WORDS); // fallback to local
-    }
-    setLoading(false);
-  };
-
-  const openAdd = () => {
-    setEditWord(null);
-    setForm(EMPTY_FORM);
-    setModal(true);
-  };
-
-  const openEdit = (word) => {
-    setEditWord(word);
-    setForm({ ...EMPTY_FORM, ...word });
-    setModal(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.word.trim() || !form.translation.trim()) {
-      Alert.alert("Hata", "Kelime ve çeviri zorunludur.");
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editWord) {
-        await updateFirestoreWord(editWord.id, form);
-        setWords((prev) =>
-          prev.map((w) => (w.id === editWord.id ? { ...w, ...form } : w))
-        );
-        Alert.alert("✅", "Kelime güncellendi.");
-      } else {
-        const newWord = await addFirestoreWord(form);
-        if (newWord) setWords((prev) => [newWord, ...prev]);
-        Alert.alert("✅", "Kelime eklendi.");
-      }
-      setModal(false);
-    } catch {
-      Alert.alert("Hata", "Kayıt başarısız.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = (word) => {
-    Alert.alert("Kelimeyi Sil", `"${word.word}" silinsin mi?`, [
-      { text: "İptal", style: "cancel" },
-      {
-        text: "Sil",
-        style: "destructive",
-        onPress: async () => {
-          await deleteFirestoreWord(word.id);
-          setWords((prev) => prev.filter((w) => w.id !== word.id));
-        },
-      },
-    ]);
-  };
-
-  const handleImageUrl = async (word) => {
-    Alert.prompt
-      ? Alert.prompt("Görsel URL", "Yeni görsel URL gir:", async (url) => {
-          if (url) {
-            await updateWordImage(word.id, url);
-            setWords((prev) =>
-              prev.map((w) => (w.id === word.id ? { ...w, imageUrl: url } : w))
-            );
-          }
-        })
-      : Alert.alert("Görsel URL", "Form alanından güncelleyebilirsin.");
-  };
-
-  const renderWord = ({ item }) => (
-    <View style={styles.wordCard}>
-      <View style={styles.wordCardLeft}>
-        {item.imageUrl ? (
-          <Image source={{ uri: item.imageUrl }} style={styles.wordThumb} />
-        ) : (
-          <View
-            style={[
-              styles.wordThumbPlaceholder,
-              { backgroundColor: LEVEL_COLORS[item.level] + "20" },
-            ]}
-          >
-            <Text style={styles.wordThumbLevel}>{item.level}</Text>
-          </View>
-        )}
-        <View style={styles.wordInfo}>
-          <Text style={styles.wordText}>{item.word}</Text>
-          <Text style={styles.wordTr}>{item.translation}</Text>
-          <View
-            style={[
-              styles.levelBadge,
-              { backgroundColor: LEVEL_COLORS[item.level] + "25" },
-            ]}
-          >
-            <Text
-              style={[
-                styles.levelBadgeText,
-                { color: LEVEL_COLORS[item.level] },
-              ]}
-            >
-              {item.level}
-            </Text>
-          </View>
-        </View>
-      </View>
-      <View style={styles.wordActions}>
-        <TouchableOpacity
-          style={styles.actionBtn}
-          onPress={() => openEdit(item)}
-        >
-          <Ionicons name="pencil" size={16} color={COLORS.accent} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionBtn}
-          onPress={() => handleImageUrl(item)}
-        >
-          <Ionicons name="image" size={16} color={COLORS.secondary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, { backgroundColor: COLORS.errorGlow }]}
-          onPress={() => handleDelete(item)}
-        >
-          <Ionicons name="trash" size={16} color={COLORS.error} />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -280,56 +81,17 @@ export default function AdminWordsScreen({ navigation }) {
           <Ionicons name="arrow-back" size={22} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Kelime Yönetimi</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={openAdd}>
-          <Ionicons name="add" size={22} color="#fff" />
-        </TouchableOpacity>
+        <Text style={styles.headerCount}>{ALL_WORDS.length} kelime</Text>
       </View>
-
-      {/* Source toggle */}
-      <View style={styles.sourceRow}>
-        {["firestore", "local"].map((s) => (
-          <TouchableOpacity
-            key={s}
-            style={[styles.sourceChip, source === s && styles.sourceChipActive]}
-            onPress={() => setSource(s)}
-          >
-            <Text
-              style={[
-                styles.sourceChipText,
-                source === s && { color: COLORS.accent },
-              ]}
-            >
-              {s === "firestore" ? "☁️ Firebase" : "📱 Lokal"}
-            </Text>
-          </TouchableOpacity>
-        ))}
-        <Text style={styles.wordCount}>{filtered.length} kelime</Text>
-      </View>
-
-      {/* Seed butonu */}
-      {source === "firestore" && words.length === 0 && !loading && (
-        <TouchableOpacity
-          style={styles.seedBtn}
-          onPress={async () => {
-            setLoading(true);
-            const { ALL_WORDS } = require("../../data/wordDatabase");
-            const ok = await seedWordsToFirestore(ALL_WORDS);
-            if (ok) {
-              Alert.alert("Basarili", "Kelimeler Firebase yüklendi!");
-              loadWords();
-            } else {
-              Alert.alert("Hata", "Yükleme basarisiz.");
-              setLoading(false);
-            }
-          }}
-        >
-          <Text style={styles.seedBtnText}>Kelimeleri Firebase Yukle</Text>
-        </TouchableOpacity>
-      )}
 
       {/* Arama */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={16} color={COLORS.textMuted} />
+      <View style={styles.searchRow}>
+        <Ionicons
+          name="search"
+          size={18}
+          color={COLORS.textMuted}
+          style={styles.searchIcon}
+        />
         <TextInput
           style={styles.searchInput}
           placeholder="Kelime ara..."
@@ -337,247 +99,121 @@ export default function AdminWordsScreen({ navigation }) {
           value={search}
           onChangeText={setSearch}
         />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch("")}>
+            <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Seviye filtresi */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.levelRow}
-        contentContainerStyle={{
-          paddingHorizontal: SPACING.lg,
-          gap: SPACING.sm,
-          alignItems: "center",
-        }}
-      >
-        {["ALL", ...LEVELS].map((l) => (
-          <TouchableOpacity
-            key={l}
-            style={[
-              styles.levelChip,
-              levelFilter === l && {
-                backgroundColor: (LEVEL_COLORS[l] || COLORS.accent) + "25",
-                borderColor: LEVEL_COLORS[l] || COLORS.accent,
-              },
-            ]}
-            onPress={() => setLevel(l)}
-          >
-            <Text
+      {/* Seviye Seçici — 3x2 grid, büyük butonlar */}
+      <View style={styles.levelGrid}>
+        {LEVELS.map((lvl) => {
+          const active = selectedLevel === lvl;
+          const color = LEVEL_COLORS[lvl];
+          const count = ALL_WORDS.filter((w) => w.level === lvl).length;
+          return (
+            <TouchableOpacity
+              key={lvl}
               style={[
-                styles.levelChipText,
-                levelFilter === l && {
-                  color: LEVEL_COLORS[l] || COLORS.accent,
-                },
+                styles.levelChip,
+                active && { backgroundColor: color, borderColor: color },
+                !active && { borderColor: color + "60" },
               ]}
+              onPress={() => setSelectedLevel(lvl)}
+              activeOpacity={0.8}
             >
-              {l}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {loading ? (
-        <View style={styles.loadingCenter}>
-          <ActivityIndicator color={COLORS.accent} size="large" />
-        </View>
-      ) : (
-        <FlatList
-          data={filtered}
-          renderItem={renderWord}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyIcon}>📭</Text>
-              <Text style={styles.emptyText}>Kelime bulunamadı</Text>
-            </View>
-          }
-        />
-      )}
-
-      {/* Ekle/Düzenle Modal */}
-      <Modal
-        visible={modalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-      >
-        <SafeAreaView style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setModal(false)}>
-              <Ionicons name="close" size={24} color={COLORS.textSecondary} />
+              <Text
+                style={[
+                  styles.levelChipLabel,
+                  { color: active ? "#fff" : color },
+                ]}
+              >
+                {lvl}
+              </Text>
+              <Text
+                style={[
+                  styles.levelChipCount,
+                  { color: active ? "#ffffffCC" : color + "AA" },
+                ]}
+              >
+                {count}
+              </Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>
-              {editWord ? "Kelimeyi Düzenle" : "Yeni Kelime Ekle"}
-            </Text>
-            <TouchableOpacity onPress={handleSave} disabled={saving}>
-              {saving ? (
-                <ActivityIndicator color={COLORS.accent} />
-              ) : (
-                <Text style={styles.modalSave}>Kaydet</Text>
-              )}
-            </TouchableOpacity>
-          </View>
+          );
+        })}
+      </View>
 
-          <ScrollView
-            contentContainerStyle={styles.modalContent}
-            keyboardShouldPersistTaps="handled"
-          >
-            <Field
-              label="Kelime *"
-              value={form.word}
-              onChange={(v) => setForm((p) => ({ ...p, word: v }))}
-              placeholder="Örn: serendipity"
-            />
-            <Field
-              label="Çeviri *"
-              value={form.translation}
-              onChange={(v) => setForm((p) => ({ ...p, translation: v }))}
-              placeholder="güzel tesadüf"
-            />
-            <Field
-              label="Telaffuz"
-              value={form.phonetic}
-              onChange={(v) => setForm((p) => ({ ...p, phonetic: v }))}
-              placeholder="/sɛr.ənˈdɪp.ɪ.ti/"
-            />
-
-            {/* Seviye seçici */}
-            <Text style={styles.fieldLabel}>Seviye</Text>
-            <View
-              style={{
-                flexDirection: "row",
-                flexWrap: "wrap",
-                gap: SPACING.sm,
-                marginBottom: SPACING.md,
-              }}
-            >
-              {LEVELS.map((l) => (
-                <TouchableOpacity
-                  key={l}
-                  style={[
-                    styles.levelChipLarge,
-                    form.level === l && {
-                      backgroundColor: LEVEL_COLORS[l] + "30",
-                      borderColor: LEVEL_COLORS[l],
-                      borderWidth: 2,
-                    },
-                  ]}
-                  onPress={() => setForm((p) => ({ ...p, level: l }))}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.levelChipTextLarge,
-                      {
-                        color:
-                          form.level === l
-                            ? LEVEL_COLORS[l]
-                            : COLORS.textSecondary,
-                      },
-                    ]}
-                  >
-                    {l}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Field
-              label="Örnek Cümle (EN)"
-              value={form.example}
-              onChange={(v) => setForm((p) => ({ ...p, example: v }))}
-              multiline
-            />
-            <Field
-              label="Örnek Cümle (TR)"
-              value={form.exampleTr}
-              onChange={(v) => setForm((p) => ({ ...p, exampleTr: v }))}
-              multiline
-            />
-            <Field
-              label="İpucu"
-              value={form.hint}
-              onChange={(v) => setForm((p) => ({ ...p, hint: v }))}
-              multiline
-            />
-            <Field
-              label="Hafıza İpucu"
-              value={form.memoryTip}
-              onChange={(v) => setForm((p) => ({ ...p, memoryTip: v }))}
-              multiline
-            />
-            <Field
-              label="Görsel URL"
-              value={form.imageUrl}
-              onChange={(v) => setForm((p) => ({ ...p, imageUrl: v }))}
-              placeholder="https://..."
-            />
-
-            {form.imageUrl ? (
-              <Image
-                source={{ uri: form.imageUrl }}
-                style={styles.imagePreview}
-                resizeMode="cover"
-              />
-            ) : null}
-
-            <View style={{ height: SPACING.xxxl }} />
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      {/* Firebase Seed Butonu */}
       {seeding ? (
-        <View style={{ padding: 20, alignItems: "center" }}>
-          <ActivityIndicator size="large" color="#6C63FF" />
-          <Text style={{ marginTop: 8, color: "#666" }}>
-            Yükleniyor... %{seedProgress}
-          </Text>
+        <View style={styles.seedingRow}>
+          <ActivityIndicator size="small" color={COLORS.accent} />
+          <Text style={styles.seedingText}>Yükleniyor... %{seedProgress}</Text>
         </View>
       ) : (
-        <TouchableOpacity
-          style={{
-            backgroundColor: "#FF6B35",
-            padding: 14,
-            borderRadius: 10,
-            margin: 16,
-            alignItems: "center",
-          }}
-          onPress={handleSeedFirebase}
-        >
-          <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 16 }}>
-            🔥 Firebase'e Seed Et ({ALL_WORDS.length} kelime)
+        <TouchableOpacity style={styles.seedBtn} onPress={handleSeedFirebase}>
+          <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+          <Text style={styles.seedBtnText}>
+            Firebase'e Seed Et ({ALL_WORDS.length})
           </Text>
         </TouchableOpacity>
       )}
-    </SafeAreaView>
-  );
-}
 
-function Field({ label, value, onChange, placeholder, multiline }) {
-  return (
-    <View style={styles.fieldContainer}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        style={[
-          styles.fieldInput,
-          multiline && { minHeight: 72, textAlignVertical: "top" },
-        ]}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={COLORS.textMuted}
-        multiline={multiline}
+      {/* Kelime Listesi */}
+      <FlatList
+        data={filtered}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <Text style={styles.listHeader}>
+            {selectedLevel} — {filtered.length} kelime
+            {search ? ` (arama: "${search}")` : ""}
+          </Text>
+        }
+        renderItem={({ item }) => (
+          <View style={styles.wordCard}>
+            <View style={styles.wordCardLeft}>
+              <Text style={styles.wordText}>{item.word}</Text>
+              <Text style={styles.wordTr}>{item.translation}</Text>
+              <Text style={styles.wordExample} numberOfLines={1}>
+                {item.example}
+              </Text>
+            </View>
+            <View style={styles.wordCardRight}>
+              <View
+                style={[
+                  styles.posBadge,
+                  { backgroundColor: LEVEL_COLORS[item.level] + "20" },
+                ]}
+              >
+                <Text
+                  style={[styles.posText, { color: LEVEL_COLORS[item.level] }]}
+                >
+                  {item.partOfSpeech?.slice(0, 4)}
+                </Text>
+              </View>
+              <Text style={styles.catText}>{item.category}</Text>
+            </View>
+          </View>
+        )}
+        ListEmptyComponent={
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyText}>Kelime bulunamadı</Text>
+          </View>
+        }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: SPACING.md,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
     borderBottomWidth: 1,
@@ -592,108 +228,82 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
+    flex: 1,
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.lg,
     fontWeight: "700",
   },
-  addBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  headerCount: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm },
 
-  sourceRow: {
+  searchRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.sm,
-    gap: SPACING.sm,
-  },
-  sourceChip: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 6,
+    margin: SPACING.md,
     backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.full,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACING.md,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  sourceChipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentGlow,
-  },
-  sourceChipText: {
-    color: COLORS.textSecondary,
-    fontSize: FONT_SIZES.sm,
-    fontWeight: "600",
-  },
-  wordCount: {
-    color: COLORS.textMuted,
-    fontSize: FONT_SIZES.xs,
-    marginLeft: "auto",
-  },
-  seedBtn: {
-    marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.sm,
-    backgroundColor: COLORS.accentGlow,
-    borderWidth: 1,
-    borderColor: COLORS.borderAccent,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    alignItems: "center",
-  },
-  seedBtnText: {
-    color: COLORS.accent,
-    fontWeight: "700",
+  searchIcon: { marginRight: SPACING.sm },
+  searchInput: {
+    flex: 1,
+    color: COLORS.textPrimary,
     fontSize: FONT_SIZES.md,
+    paddingVertical: SPACING.md,
   },
 
-  searchBar: {
+  // ── Seviye grid: 3 sütun, büyük butonlar ──
+  levelGrid: {
     flexDirection: "row",
-    alignItems: "center",
+    flexWrap: "wrap",
     gap: SPACING.sm,
-    marginHorizontal: SPACING.lg,
+    paddingHorizontal: SPACING.md,
     marginBottom: SPACING.sm,
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: SPACING.md,
-    height: 42,
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
-  searchInput: { flex: 1, color: COLORS.textPrimary, fontSize: FONT_SIZES.md },
-  levelRow: { flexGrow: 0, marginBottom: SPACING.sm },
   levelChip: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 6,
+    // her satırda 3 buton: (ekran - 2*pad - 2*gap) / 3
+    width: "31%",
+    height: 60,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1.5,
     backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.full,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  levelChipLarge: {
-    width: 72,
-    height: 52,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    gap: 2,
   },
-  levelChipTextLarge: { fontWeight: "800", fontSize: FONT_SIZES.md },
-  levelChipText: {
-    color: COLORS.textSecondary,
-    fontWeight: "700",
-    fontSize: FONT_SIZES.sm,
-  },
-  loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
-  list: {
-    paddingHorizontal: SPACING.lg,
+  levelChipLabel: { fontSize: 18, fontWeight: "900" },
+  levelChipCount: { fontSize: 11, fontWeight: "600" },
+
+  // Seed butonu
+  seedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: SPACING.sm,
-    paddingBottom: SPACING.xxxl,
+    backgroundColor: "#FF6B35",
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: RADIUS.lg,
+  },
+  seedBtnText: { color: "#fff", fontWeight: "700", fontSize: FONT_SIZES.md },
+  seedingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: SPACING.sm,
+    padding: SPACING.md,
+  },
+  seedingText: { color: COLORS.textSecondary, fontWeight: "600" },
+
+  // Liste
+  list: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.xxxl },
+  listHeader: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZES.sm,
+    marginBottom: SPACING.sm,
+    fontWeight: "600",
   },
 
   wordCard: {
@@ -701,94 +311,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.lg,
-    padding: SPACING.sm,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm,
     borderWidth: 1,
     borderColor: COLORS.border,
-    gap: SPACING.sm,
   },
-  wordCardLeft: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.sm,
-  },
-  wordThumb: { width: 48, height: 48, borderRadius: RADIUS.md },
-  wordThumbPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: RADIUS.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  wordThumbLevel: { fontWeight: "800", fontSize: FONT_SIZES.xs },
-  wordInfo: { flex: 1, gap: 2 },
+  wordCardLeft: { flex: 1, gap: 2 },
   wordText: {
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.md,
     fontWeight: "700",
   },
-  wordTr: { color: COLORS.accent, fontSize: FONT_SIZES.sm },
-  levelBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 6,
+  wordTr: { color: COLORS.textSecondary, fontSize: FONT_SIZES.sm },
+  wordExample: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZES.xs,
+    fontStyle: "italic",
+  },
+  wordCardRight: { alignItems: "flex-end", gap: 4 },
+  posBadge: {
+    paddingHorizontal: SPACING.sm,
     paddingVertical: 2,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.full,
   },
-  levelBadgeText: { fontSize: 10, fontWeight: "700" },
-  wordActions: { flexDirection: "row", gap: SPACING.xs },
-  actionBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.backgroundCardLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  empty: { alignItems: "center", paddingTop: SPACING.xxxl, gap: SPACING.md },
-  emptyIcon: { fontSize: 40 },
-  emptyText: { color: COLORS.textSecondary, fontSize: FONT_SIZES.lg },
+  posText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
+  catText: { color: COLORS.textMuted, fontSize: 9 },
 
-  // Modal
-  modal: { flex: 1, backgroundColor: COLORS.background },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  modalTitle: {
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZES.lg,
-    fontWeight: "700",
-  },
-  modalSave: {
-    color: COLORS.accent,
-    fontSize: FONT_SIZES.md,
-    fontWeight: "700",
-  },
-  modalContent: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
-  fieldContainer: { marginBottom: SPACING.md },
-  fieldLabel: {
-    color: COLORS.textSecondary,
-    fontSize: FONT_SIZES.sm,
-    marginBottom: SPACING.xs,
-  },
-  fieldInput: {
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZES.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  imagePreview: {
-    width: "100%",
-    height: 160,
-    borderRadius: RADIUS.lg,
-    marginTop: SPACING.sm,
-  },
+  emptyBox: { padding: SPACING.xxxl, alignItems: "center" },
+  emptyText: { color: COLORS.textMuted, fontSize: FONT_SIZES.md },
 });

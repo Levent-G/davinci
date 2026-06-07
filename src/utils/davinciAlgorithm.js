@@ -234,17 +234,38 @@ export function getDailyWords(
 ) {
   const now = new Date();
 
-  // 1. Tekrar zamanı gelmiş kelimeler
-  const dueWords = allWords.filter((w) => {
+  // "Bilinen" veya tam öğrenilmiş kelimeleri tamamen dışla
+  const isLearned = (w) => {
+    const p = wordProgress[w.id];
+    if (!p) return false;
+    if (p.knownByUser) return true; // "Biliyorum" dendi
+    if ((p.masteryLevel || 0) >= 4) return true; // Tam öğrenilmiş
+    return false;
+  };
+
+  const available = allWords.filter((w) => !isLearned(w));
+
+  // 1. Tekrar zamanı gelmiş kelimeler (due)
+  const dueWords = available.filter((w) => {
     const p = wordProgress[w.id];
     if (!p?.nextReviewDate) return false;
     return new Date(p.nextReviewDate) <= now;
   });
 
-  // 2. Hiç görülmemiş yeni kelimeler
-  const unseenWords = allWords.filter((w) => {
+  // 2. Hiç görülmemiş yeni kelimeler — karıştır
+  const unseenWords = available
+    .filter((w) => {
+      const p = wordProgress[w.id];
+      return !p || p.correctCount === undefined;
+    })
+    .sort(() => Math.random() - 0.5);
+
+  // 3. Düşük ustalık seviyesindeki kelimeler
+  const lowMasteryWords = available.filter((w) => {
     const p = wordProgress[w.id];
-    return !p || p.correctCount === undefined;
+    if (!p) return false;
+    const mastery = getMasteryLevel(p);
+    return mastery > 0 && mastery < 3;
   });
 
   // Seviye tercihine göre sırala
@@ -256,15 +277,7 @@ export function getDailyWords(
     ];
   };
 
-  // 3. Düşük ustalık seviyesindeki kelimeler
-  const lowMasteryWords = allWords.filter((w) => {
-    const p = wordProgress[w.id];
-    if (!p) return false;
-    const mastery = getMasteryLevel(p);
-    return mastery > 0 && mastery < 3;
-  });
-
-  // Havuzları birleştir
+  // Havuzları birleştir: önce tekrar gereken, sonra yeni, sonra düşük ustalık
   const pool = [...dueWords, ...sortByLevel(unseenWords), ...lowMasteryWords];
 
   // Tekrarları kaldır
@@ -275,9 +288,9 @@ export function getDailyWords(
     return true;
   });
 
-  // Yeterli kelime yoksa tüm havuzdan rastgele doldur
+  // Yeterli kelime yoksa kalan available'dan rastgele doldur
   if (unique.length < sessionSize) {
-    const remaining = allWords.filter((w) => !seen.has(w.id));
+    const remaining = available.filter((w) => !seen.has(w.id));
     unique.push(...remaining.sort(() => Math.random() - 0.5));
   }
 

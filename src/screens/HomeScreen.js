@@ -1,5 +1,5 @@
 // src/screens/HomeScreen.jsx
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,55 +7,137 @@ import {
   ScrollView,
   TouchableOpacity,
   Animated,
-  Dimensions,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
+import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
-import { useSubscription } from "../context/SubscriptionContext";
-import { getDailyStats } from "../utils/davinciAlgorithm";
+import { getDailyStats, isDueForReview } from "../utils/davinciAlgorithm";
 
-const { width } = Dimensions.get("window");
+const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const LEVEL_COLORS = {
+  A1: "#4ECDC4",
+  A2: "#45B7D1",
+  B1: "#96C93D",
+  B2: "#F9CA24",
+  C1: "#F0932B",
+  C2: "#E17055",
+};
 
 export default function HomeScreen({ navigation }) {
   const { state, actions } = useApp();
-  const { state: subState } = useSubscription();
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
-  const streakAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
+  const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
-  const todayCount = actions.getTodayWordCount();
-  const streak = state.stats.streak || 0;
-  const totalLearned = state.stats.totalWordsLearned || 0;
   const allWords = actions.getAllWords();
+  const streak = state.stats.streak || 0;
+  const userName = state.user?.name || "Öğrenci";
+  const prefLevel =
+    state.user?.settings?.preferredLevel ||
+    state.settings?.preferredLevel ||
+    "A1";
+
   const dailyStats = getDailyStats(allWords, state.wordProgress);
+  const reviewCount = allWords.filter((w) => {
+    const p = state.wordProgress[w.id];
+    return p && isDueForReview(p);
+  }).length;
+
+  // Mevcut seviye ilerleme
+  const currentLevelProgress = useMemo(() => {
+    const words = allWords.filter((w) => w.level === prefLevel);
+    if (!words.length) return { pct: 0, learned: 0, total: 0 };
+    const learned = words.filter((w) => {
+      const p = state.wordProgress[w.id];
+      return p && (p.knownByUser || (p.masteryLevel || 0) >= 4);
+    }).length;
+    return {
+      pct: Math.round((learned / words.length) * 100),
+      learned,
+      total: words.length,
+    };
+  }, [allWords, state.wordProgress, prefLevel]);
+
+  // Akıllı yönlendirme — duruma göre tek net mesaj
+  const guidance = useMemo(() => {
+    if (reviewCount > 0) {
+      return {
+        emoji: "🔄",
+        title: `${reviewCount} kelime tekrar bekliyor`,
+        subtitle: "Hafızan zayıflamadan tekrar et",
+        btnLabel: "Şimdi Tekrar Yap",
+        btnColor: COLORS.secondary,
+        onPress: () => {
+          const words = allWords
+            .filter((w) => {
+              const p = state.wordProgress[w.id];
+              return p && isDueForReview(p);
+            })
+            .slice(0, 5);
+          navigation.navigate("LearningSession", { words, mode: "review" });
+        },
+      };
+    }
+    if (dailyStats.todayStudied === 0) {
+      return {
+        emoji: "🎯",
+        title: "Bugün henüz başlamadın",
+        subtitle: `${prefLevel} seviyesinde 5 yeni kelime seni bekliyor`,
+        btnLabel: "Öğrenmeye Başla →",
+        btnColor: COLORS.accent,
+        onPress: () => navigation.navigate("Learn", { level: prefLevel }),
+      };
+    }
+    if (currentLevelProgress.pct >= 100) {
+      const nextLvl = LEVELS[LEVELS.indexOf(prefLevel) + 1];
+      return {
+        emoji: "🏆",
+        title: `${prefLevel} seviyesini bitirdin!`,
+        subtitle: nextLvl
+          ? `${nextLvl} seviyesine geçmeye hazırsın`
+          : "Tebrikler, her şeyi öğrendin!",
+        btnLabel: nextLvl
+          ? `${nextLvl} Seviyesine Geç →`
+          : "İstatistiklere Bak",
+        btnColor: LEVEL_COLORS[prefLevel],
+        onPress: () =>
+          nextLvl
+            ? navigation.navigate("Learn", { level: nextLvl })
+            : navigation.navigate("Stats"),
+      };
+    }
+    return {
+      emoji: "💪",
+      title: `${dailyStats.todayStudied} kelime öğrendin`,
+      subtitle: `${prefLevel}: %${currentLevelProgress.pct} tamamlandı, devam et!`,
+      btnLabel: "Devam Et →",
+      btnColor: LEVEL_COLORS[prefLevel],
+      onPress: () => navigation.navigate("Learn", { level: prefLevel }),
+    };
+  }, [reviewCount, dailyStats, currentLevelProgress, prefLevel, allWords]);
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 700,
+        duration: 500,
         useNativeDriver: true,
       }),
       Animated.spring(slideAnim, {
         toValue: 0,
         tension: 80,
-        friction: 10,
+        friction: 12,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 80,
+        friction: 12,
         useNativeDriver: true,
       }),
     ]).start();
-    // Streak animasyonu
-    if (streak > 0) {
-      Animated.spring(streakAnim, {
-        toValue: 1,
-        tension: 60,
-        friction: 8,
-        useNativeDriver: true,
-        delay: 400,
-      }).start();
-    }
   }, []);
 
   const getGreeting = () => {
@@ -65,12 +147,8 @@ export default function HomeScreen({ navigation }) {
     return "İyi akşamlar";
   };
 
-  const getDailyMessage = () => {
-    if (dailyStats.dueCount > 0)
-      return `${dailyStats.dueCount} kelime tekrar bekliyor`;
-    if (dailyStats.todayStudied === 0) return "Bugün henüz çalışmadın";
-    return `Bugün ${dailyStats.todayStudied} kelime öğrendin!`;
-  };
+  const clp = currentLevelProgress;
+  const levelColor = LEVEL_COLORS[prefLevel];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -78,419 +156,375 @@ export default function HomeScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
       >
-        {/* Header */}
+        {/* ── Header ── */}
         <Animated.View
           style={[
             styles.header,
-            { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }],
+            },
           ]}
         >
           <View>
             <Text style={styles.greeting}>
-              {getGreeting()}, {state.user?.name || "Da Vinci"} 👋
+              {getGreeting()}, {userName} 👋
             </Text>
-            <Text style={styles.headerTitle}>Da Vinci ile Öğren</Text>
+            <Text style={styles.appName}>Da Vinci Words</Text>
           </View>
-          {subState.plan === "trial" && !subState.isTrialExpired && (
-            <TouchableOpacity
-              style={styles.trialBadge}
-              onPress={() => navigation.navigate("Paywall")}
-            >
-              <Ionicons name="flash" size={14} color={COLORS.accent} />
-              <Text style={styles.trialBadgeText}>
-                {subState.trialDaysLeft}g
-              </Text>
+          {streak > 0 && (
+            <TouchableOpacity style={styles.streakPill}>
+              <Text style={styles.streakFire}>🔥</Text>
+              <Text style={styles.streakNum}>{streak} gün</Text>
             </TouchableOpacity>
           )}
         </Animated.View>
 
-        {/* Streak Kartı */}
-        {streak > 0 && (
-          <Animated.View
-            style={[{ opacity: fadeAnim, transform: [{ scale: streakAnim }] }]}
-          >
-            <LinearGradient
-              colors={
-                streak >= 7 ? ["#FF6B35", "#F7B731"] : ["#FF8C42", "#FFA07A"]
-              }
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.streakCard}
-            >
-              <View style={styles.streakLeft}>
-                <Text style={styles.streakFire}>🔥</Text>
-                <View>
-                  <Text style={styles.streakNum}>{streak}</Text>
-                  <Text style={styles.streakLabel}>Günlük Seri</Text>
-                </View>
-              </View>
-              <View style={styles.streakRight}>
-                <Text style={styles.streakMsg}>
-                  {streak >= 30
-                    ? "🏆 Efsane!"
-                    : streak >= 14
-                    ? "⚡ Muhteşem!"
-                    : streak >= 7
-                    ? "🌟 Harika!"
-                    : "💪 Devam et!"}
-                </Text>
-                <View style={styles.streakDots}>
-                  {[...Array(Math.min(streak, 7))].map((_, i) => (
-                    <View
-                      key={i}
-                      style={[styles.streakDot, { opacity: 1 - i * 0.1 }]}
-                    />
-                  ))}
-                </View>
-              </View>
-            </LinearGradient>
-          </Animated.View>
-        )}
-
-        {/* Günlük Durum */}
-        <Animated.View style={[styles.dailyCard, { opacity: fadeAnim }]}>
-          <View style={styles.dailyHeader}>
-            <Text style={styles.dailyTitle}>Bugün</Text>
-            <Text style={styles.dailyMsg}>{getDailyMessage()}</Text>
-          </View>
-          <View style={styles.dailyStats}>
-            <DailyStat
-              icon="✨"
-              value={dailyStats.newCount}
-              label="Yeni"
-              color={COLORS.accent}
-            />
-            <DailyStat
-              icon="🔄"
-              value={dailyStats.dueCount}
-              label="Tekrar"
-              color={COLORS.secondary}
-            />
-            <DailyStat
-              icon="✅"
-              value={dailyStats.todayStudied}
-              label="Öğrenildi"
-              color={COLORS.success}
-            />
-            <DailyStat
-              icon="🏆"
-              value={dailyStats.masteredCount}
-              label="Ustalaşıldı"
-              color="#F9CA24"
-            />
-          </View>
-          {/* Progress bar */}
-          <View style={styles.dailyProgress}>
-            <View
-              style={[
-                styles.dailyProgressFill,
-                {
-                  width: `${Math.min(
-                    100,
-                    (dailyStats.todayStudied /
-                      (state.settings?.dailyGoal || 10)) *
-                      100
-                  )}%`,
-                },
-              ]}
-            />
-          </View>
-          <Text style={styles.dailyGoalText}>
-            Günlük hedef: {dailyStats.todayStudied}/
-            {state.settings?.dailyGoal || 10}
-          </Text>
-        </Animated.View>
-
-        {/* Stats Row */}
-        <Animated.View style={[styles.statsRow, { opacity: fadeAnim }]}>
-          <StatCard
-            icon="📚"
-            value={totalLearned}
-            label="Toplam"
-            color={COLORS.accent}
-          />
-          <StatCard
-            icon="⭐"
-            value={
-              allWords.filter(
-                (w) => (state.wordProgress[w.id]?.masteryLevel || 0) >= 4
-              ).length
-            }
-            label="Ustalaşıldı"
-            color="#F9CA24"
-          />
-          <StatCard
-            icon="🎯"
-            value={state.stats.totalSessions || 0}
-            label="Oturum"
-            color={COLORS.secondary}
-          />
-        </Animated.View>
-
-        {/* Firebase badge */}
-        {state.firestoreWords?.length > 0 && (
-          <Animated.View style={[styles.syncBadge, { opacity: fadeAnim }]}>
-            <Ionicons name="cloud-done" size={14} color={COLORS.secondary} />
-            <Text style={styles.syncText}>
-              {state.firestoreWords.length} kelime senkronize edildi
-            </Text>
-          </Animated.View>
-        )}
-
-        {/* CTA Butonu */}
-        <Animated.View style={{ opacity: fadeAnim }}>
+        {/* ── Ana Aksiyon Kartı ── */}
+        <Animated.View
+          style={{
+            opacity: fadeAnim,
+            transform: [{ translateY: slideAnim }, { scale: scaleAnim }],
+            marginBottom: SPACING.lg,
+          }}
+        >
           <TouchableOpacity
-            style={styles.startButton}
-            onPress={() => navigation.navigate("Learn")}
-            activeOpacity={0.9}
+            onPress={guidance.onPress}
+            activeOpacity={0.92}
+            style={styles.mainCard}
           >
             <LinearGradient
-              colors={[COLORS.accent, COLORS.accentDark || "#5A52D5"]}
+              colors={[guidance.btnColor, guidance.btnColor + "DD"]}
               start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.startGradient}
+              end={{ x: 1, y: 1 }}
+              style={styles.mainCardGrad}
             >
-              <Ionicons name="play-circle" size={28} color="#fff" />
-              <View>
-                <Text style={styles.startTitle}>Öğrenmeye Başla</Text>
-                <Text style={styles.startSubtitle}>
-                  {dailyStats.dueCount > 0
-                    ? `${dailyStats.dueCount} tekrar + yeni kelimeler`
-                    : `${dailyStats.newCount} yeni kelime seni bekliyor`}
-                </Text>
+              <Text style={styles.mainCardEmoji}>{guidance.emoji}</Text>
+              <View style={styles.mainCardText}>
+                <Text style={styles.mainCardTitle}>{guidance.title}</Text>
+                <Text style={styles.mainCardSubtitle}>{guidance.subtitle}</Text>
               </View>
-              <Ionicons
-                name="arrow-forward"
-                size={22}
-                color="#fff"
-                style={{ marginLeft: "auto" }}
-              />
+              <View style={styles.mainCardBtn}>
+                <Text style={styles.mainCardBtnText}>{guidance.btnLabel}</Text>
+              </View>
             </LinearGradient>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Da Vinci Prensipleri */}
-        <Animated.View style={[styles.section, { opacity: fadeAnim }]}>
-          <Text style={styles.sectionTitle}>Da Vinci Prensipleri</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: SPACING.sm, paddingHorizontal: 2 }}
-          >
-            {[
-              {
-                icon: "🔍",
-                name: "Curiosità",
-                desc: "Sonsuz merak",
-                color: "#F5A623",
-              },
-              {
-                icon: "✨",
-                name: "Sensazione",
-                desc: "5 duyuyla algı",
-                color: "#A29BFE",
-              },
-              {
-                icon: "⚗️",
-                name: "Dimostrazione",
-                desc: "Deneyerek öğren",
-                color: "#4ECDC4",
-              },
-              {
-                icon: "🕸️",
-                name: "Connessione",
-                desc: "Her şey bağlantılı",
-                color: "#81C784",
-              },
-              {
-                icon: "⚖️",
-                name: "Arte/Scienza",
-                desc: "Denge ve test",
-                color: "#E17055",
-              },
-            ].map((p, i) => (
-              <View
-                key={i}
-                style={[styles.principleCard, { borderColor: p.color + "40" }]}
-              >
-                <Text style={styles.principleIcon}>{p.icon}</Text>
-                <Text style={[styles.principleName, { color: p.color }]}>
-                  {p.name}
-                </Text>
-                <Text style={styles.principleDesc}>{p.desc}</Text>
-              </View>
-            ))}
-          </ScrollView>
+        {/* ── Mevcut Seviye ── */}
+        <Animated.View
+          style={[
+            styles.levelCard,
+            {
+              opacity: fadeAnim,
+              borderColor: levelColor + "40",
+            },
+          ]}
+        >
+          <View style={styles.levelCardHeader}>
+            <View
+              style={[
+                styles.levelBadge,
+                { backgroundColor: levelColor + "20" },
+              ]}
+            >
+              <Text style={[styles.levelBadgeText, { color: levelColor }]}>
+                {prefLevel}
+              </Text>
+            </View>
+            <View style={styles.levelCardMid}>
+              <Text style={styles.levelCardTitle}>Mevcut Seviye</Text>
+              <Text style={[styles.levelCardFrac, { color: levelColor }]}>
+                {clp.learned} / {clp.total} kelime
+              </Text>
+            </View>
+            <Text style={[styles.levelCardPct, { color: levelColor }]}>
+              {clp.pct}%
+            </Text>
+          </View>
+          {/* Progress bar */}
+          <View style={styles.levelBarBg}>
+            <Animated.View
+              style={[
+                styles.levelBarFill,
+                {
+                  width: `${clp.pct}%`,
+                  backgroundColor: levelColor,
+                },
+              ]}
+            />
+          </View>
+          <Text style={styles.levelCardHint}>
+            {clp.pct === 0
+              ? "Henüz başlamadın — ilk kelimeni öğren!"
+              : clp.pct < 50
+              ? "İyi gidiyorsun, devam et!"
+              : clp.pct < 100
+              ? "Yarısından fazlasını geçtin! 🔥"
+              : "🎉 Bu seviyeyi tamamladın!"}
+          </Text>
         </Animated.View>
 
-        <View style={{ height: SPACING.xxxl }} />
+        {/* ── 3 Stat ── */}
+        <Animated.View style={[styles.statsRow, { opacity: fadeAnim }]}>
+          <StatPill
+            icon="📚"
+            value={dailyStats.todayStudied}
+            label="Bugün öğrendim"
+            color={COLORS.accent}
+          />
+          <StatPill
+            icon="🔄"
+            value={reviewCount}
+            label="Tekrar bekliyor"
+            color={COLORS.secondary}
+            onPress={
+              reviewCount > 0
+                ? () => {
+                    const words = allWords
+                      .filter((w) => {
+                        const p = state.wordProgress[w.id];
+                        return p && isDueForReview(p);
+                      })
+                      .slice(0, 5);
+                    navigation.navigate("LearningSession", {
+                      words,
+                      mode: "review",
+                    });
+                  }
+                : null
+            }
+          />
+          <StatPill
+            icon="🏆"
+            value={state.stats.totalWordsLearned || 0}
+            label="Toplam öğrendim"
+            color="#F9CA24"
+          />
+        </Animated.View>
+
+        {/* ── Hızlı Seviye Geçişi ── */}
+        <Animated.View style={[styles.section, { opacity: fadeAnim }]}>
+          <Text style={styles.sectionTitle}>Seviyeler</Text>
+          <View style={styles.levelsGrid}>
+            {LEVELS.map((lvl) => {
+              const words = allWords.filter((w) => w.level === lvl);
+              const learned = words.filter((w) => {
+                const p = state.wordProgress[w.id];
+                return p && (p.knownByUser || (p.masteryLevel || 0) >= 4);
+              }).length;
+              const pct = words.length
+                ? Math.round((learned / words.length) * 100)
+                : 0;
+              const color = LEVEL_COLORS[lvl];
+              const current = lvl === prefLevel;
+              const done = pct === 100;
+              return (
+                <TouchableOpacity
+                  key={lvl}
+                  style={[
+                    styles.levelGridItem,
+                    current && { borderColor: color, borderWidth: 2 },
+                    done && { opacity: 0.7 },
+                  ]}
+                  onPress={() => navigation.navigate("Learn", { level: lvl })}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.levelGridLabel,
+                      { color: done ? COLORS.success : color },
+                    ]}
+                  >
+                    {done ? "✅" : lvl}
+                  </Text>
+                  <View style={styles.levelGridBarBg}>
+                    <View
+                      style={[
+                        styles.levelGridBarFill,
+                        {
+                          height: `${pct}%`,
+                          backgroundColor: done ? COLORS.success : color,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.levelGridPct,
+                      { color: done ? COLORS.success : color },
+                    ]}
+                  >
+                    {pct}%
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </Animated.View>
+
+        <View style={{ height: 80 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function StatCard({ icon, value, label, color }) {
-  return (
-    <View style={[styles.statCard, { borderColor: color + "30" }]}>
-      <Text style={styles.statIcon}>{icon}</Text>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+function StatPill({ icon, value, label, color, onPress }) {
+  const content = (
+    <View
+      style={[
+        styles.statPill,
+        { borderColor: color + "30" },
+        onPress && { borderColor: color + "60" },
+      ]}
+    >
+      <Text style={styles.statPillIcon}>{icon}</Text>
+      <Text style={[styles.statPillValue, { color }]}>{value}</Text>
+      <Text style={styles.statPillLabel}>{label}</Text>
+      {onPress && value > 0 && (
+        <View style={[styles.statPillDot, { backgroundColor: color }]} />
+      )}
     </View>
   );
-}
-
-function DailyStat({ icon, value, label, color }) {
-  return (
-    <View style={styles.dailyStatItem}>
-      <Text style={styles.dailyStatIcon}>{icon}</Text>
-      <Text style={[styles.dailyStatValue, { color }]}>{value}</Text>
-      <Text style={styles.dailyStatLabel}>{label}</Text>
-    </View>
-  );
+  if (onPress && value > 0) {
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        style={{ flex: 1 }}
+        activeOpacity={0.8}
+      >
+        {content}
+      </TouchableOpacity>
+    );
+  }
+  return <View style={{ flex: 1 }}>{content}</View>;
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  scroll: { paddingHorizontal: SPACING.lg, paddingTop: 4 },
+  scroll: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm },
 
+  // Header
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: SPACING.sm,
+    alignItems: "center",
+    marginBottom: SPACING.lg,
   },
   greeting: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm },
-  headerTitle: {
+  appName: {
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.xxl,
-    fontWeight: "800",
+    fontWeight: "900",
+    letterSpacing: -0.5,
   },
-  trialBadge: {
+  streakPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: COLORS.accentGlow,
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 4,
+    backgroundColor: "#FF6B35" + "15",
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
     borderRadius: RADIUS.full,
     borderWidth: 1,
-    borderColor: COLORS.accent + "40",
+    borderColor: "#FF6B35" + "40",
   },
-  trialBadgeText: {
-    color: COLORS.accent,
-    fontSize: FONT_SIZES.xs,
-    fontWeight: "700",
+  streakFire: { fontSize: 16 },
+  streakNum: { color: "#FF6B35", fontWeight: "800", fontSize: FONT_SIZES.sm },
+
+  // Ana Aksiyon Kartı
+  mainCard: { borderRadius: RADIUS.xl, overflow: "hidden" },
+  mainCardGrad: { padding: SPACING.xl, gap: SPACING.md },
+  mainCardEmoji: { fontSize: 44 },
+  mainCardText: { gap: 4 },
+  mainCardTitle: {
+    color: "#fff",
+    fontSize: FONT_SIZES.xl,
+    fontWeight: "800",
+    lineHeight: 26,
+  },
+  mainCardSubtitle: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: FONT_SIZES.sm,
+    lineHeight: 20,
+  },
+  mainCardBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0,0,0,0.2)",
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm + 2,
+    borderRadius: RADIUS.full,
+    marginTop: SPACING.xs,
+  },
+  mainCardBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: FONT_SIZES.md,
   },
 
-  streakCard: {
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    marginBottom: SPACING.md,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  streakLeft: { flexDirection: "row", alignItems: "center", gap: SPACING.md },
-  streakFire: { fontSize: 40 },
-  streakNum: { color: "#fff", fontSize: 36, fontWeight: "900" },
-  streakLabel: { color: "rgba(255,255,255,0.8)", fontSize: FONT_SIZES.sm },
-  streakRight: { alignItems: "flex-end", gap: SPACING.sm },
-  streakMsg: { color: "#fff", fontWeight: "700", fontSize: FONT_SIZES.md },
-  streakDots: { flexDirection: "row", gap: 4 },
-  streakDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "rgba(255,255,255,0.8)",
-  },
-
-  dailyCard: {
+  // Mevcut Seviye
+  levelCard: {
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.xl,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    borderWidth: 1.5,
     gap: SPACING.md,
   },
-  dailyHeader: { gap: 4 },
-  dailyTitle: {
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZES.lg,
-    fontWeight: "700",
+  levelCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
   },
-  dailyMsg: { color: COLORS.textSecondary, fontSize: FONT_SIZES.sm },
-  dailyStats: { flexDirection: "row", justifyContent: "space-around" },
-  dailyStatItem: { alignItems: "center", gap: 3 },
-  dailyStatIcon: { fontSize: 20 },
-  dailyStatValue: {
-    fontSize: FONT_SIZES.xl,
-    fontWeight: "800",
-    color: COLORS.textPrimary,
+  levelBadge: {
+    width: 44,
+    height: 36,
+    borderRadius: RADIUS.md,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  dailyStatLabel: { color: COLORS.textMuted, fontSize: 10 },
-  dailyProgress: {
-    height: 6,
-    backgroundColor: COLORS.border,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  dailyProgressFill: {
-    height: 6,
-    backgroundColor: COLORS.accent,
-    borderRadius: 3,
-  },
-  dailyGoalText: {
+  levelBadgeText: { fontSize: FONT_SIZES.md, fontWeight: "900" },
+  levelCardMid: { flex: 1 },
+  levelCardTitle: {
     color: COLORS.textMuted,
     fontSize: FONT_SIZES.xs,
-    textAlign: "right",
+    fontWeight: "600",
   },
+  levelCardFrac: { fontSize: FONT_SIZES.sm, fontWeight: "700" },
+  levelCardPct: { fontSize: FONT_SIZES.xxl, fontWeight: "900" },
+  levelBarBg: {
+    height: 8,
+    backgroundColor: COLORS.border,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  levelBarFill: { height: 8, borderRadius: 4 },
+  levelCardHint: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
 
-  statsRow: { flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.md },
-  statCard: {
-    flex: 1,
+  // Stats
+  statsRow: { flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.lg },
+  statPill: {
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.lg,
     padding: SPACING.md,
     alignItems: "center",
-    gap: 4,
+    gap: 3,
     borderWidth: 1,
+    position: "relative",
   },
-  statIcon: { fontSize: 20 },
-  statValue: { fontSize: FONT_SIZES.xl, fontWeight: "800" },
-  statLabel: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-
-  syncBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.xs,
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.sm,
-    marginBottom: SPACING.sm,
-    borderWidth: 1,
-    borderColor: COLORS.secondary + "30",
-  },
-  syncText: {
-    color: COLORS.secondary,
-    fontSize: FONT_SIZES.xs,
-    fontWeight: "600",
+  statPillIcon: { fontSize: 20 },
+  statPillValue: { fontSize: FONT_SIZES.xl, fontWeight: "800" },
+  statPillLabel: { color: COLORS.textMuted, fontSize: 9, textAlign: "center" },
+  statPillDot: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
 
-  startButton: {
-    marginBottom: SPACING.lg,
-    borderRadius: RADIUS.xl,
-    overflow: "hidden",
-  },
-  startGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.md,
-    padding: SPACING.lg,
-  },
-  startTitle: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "700" },
-  startSubtitle: { color: "rgba(255,255,255,0.8)", fontSize: FONT_SIZES.xs },
-
+  // Seviyeler grid
   section: { marginBottom: SPACING.lg },
   sectionTitle: {
     color: COLORS.textPrimary,
@@ -498,20 +532,27 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: SPACING.md,
   },
-  principleCard: {
+  levelsGrid: { flexDirection: "row", gap: SPACING.sm },
+  levelGridItem: {
+    flex: 1,
     backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.md,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.sm,
     alignItems: "center",
-    width: 100,
-    gap: 4,
+    gap: 6,
     borderWidth: 1,
+    borderColor: COLORS.border,
+    height: 90,
   },
-  principleIcon: { fontSize: 28 },
-  principleName: {
-    fontSize: FONT_SIZES.xs,
-    fontWeight: "700",
-    textAlign: "center",
+  levelGridLabel: { fontSize: FONT_SIZES.sm, fontWeight: "900" },
+  levelGridBarBg: {
+    flex: 1,
+    width: "60%",
+    backgroundColor: COLORS.border,
+    borderRadius: 3,
+    overflow: "hidden",
+    justifyContent: "flex-end",
   },
-  principleDesc: { color: COLORS.textMuted, fontSize: 9, textAlign: "center" },
+  levelGridBarFill: { width: "100%", borderRadius: 3 },
+  levelGridPct: { fontSize: 9, fontWeight: "700" },
 });

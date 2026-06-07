@@ -12,6 +12,7 @@ import PaywallScreen from "../screens/PaywallScreen";
 import WordDetailScreen from "../screens/WordDetailScreen";
 import AddWordScreen from "../screens/AddWordScreen";
 import AIConversationScreen from "../screens/AIConversationScreen";
+import QuickScanScreen from "../screens/QuickScanScreen";
 
 const Stack = createStackNavigator();
 
@@ -51,6 +52,7 @@ export default function RootNavigator() {
             options={{ presentation: "modal" }}
           />
           <Stack.Screen name="WordDetail" component={WordDetailScreen} />
+          <Stack.Screen name="QuickScan" component={QuickScanScreen} />
           <Stack.Screen
             name="AddWord"
             component={AddWordScreen}
