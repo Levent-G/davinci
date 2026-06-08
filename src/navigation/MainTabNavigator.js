@@ -9,7 +9,6 @@ import HomeScreen from "../screens/HomeScreen";
 import LearnScreen from "../screens/LearnScreen";
 import StatsScreen from "../screens/StatsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
-import AIRecommendScreen from "../screens/AIRecommendScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -21,13 +20,7 @@ const TABS = [
     iconOutline: "home-outline",
   },
   { name: "Learn", label: "Öğren", icon: "book", iconOutline: "book-outline" },
-  // {
-  //   name: "AI",
-  //   label: "AI",
-  //   icon: "sparkles",
-  //   iconOutline: "sparkles-outline",
-  //   isSpecial: true,
-  // },
+
   {
     name: "Stats",
     label: "İstatistik",
@@ -45,7 +38,6 @@ const TABS = [
 const SCREENS = {
   Home: HomeScreen,
   Learn: LearnScreen,
-  AI: AIRecommendScreen,
   Stats: StatsScreen,
   Profile: ProfileScreen,
 };
@@ -126,22 +118,9 @@ export default function MainTabNavigator() {
                   />
                 </View>
               ),
-            tabBarLabel: ({ color, focused }) =>
-              tab.isSpecial ? (
-                <Text
-                  style={[
-                    styles.tabLabel,
-                    {
-                      color: focused ? COLORS.accent : COLORS.textMuted,
-                      fontSize: 9,
-                    },
-                  ]}
-                >
-                  AI
-                </Text>
-              ) : (
-                <Text style={[styles.tabLabel, { color }]}>{tab.label}</Text>
-              ),
+            tabBarLabel: ({ color, focused }) => (
+              <Text style={[styles.tabLabel, { color }]}>{tab.label}</Text>
+            ),
           }}
         />
       ))}

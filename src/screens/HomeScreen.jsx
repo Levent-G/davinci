@@ -13,7 +13,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
-import { getDailyStats, isDueForReview } from "../utils/davinciAlgorithm";
+import {
+  getDailyStats,
+  getTodayReviewWords,
+  hasDoneSessionToday,
+  getNextReviewIn,
+  WORD_STATUS,
+  getWordStatus,
+} from "../utils/davinciAlgorithm";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const LEVEL_COLORS = {
@@ -40,10 +47,10 @@ export default function HomeScreen({ navigation }) {
     "A1";
 
   const dailyStats = getDailyStats(allWords, state.wordProgress);
-  const reviewCount = allWords.filter((w) => {
-    const p = state.wordProgress[w.id];
-    return p && isDueForReview(p);
-  }).length;
+  const reviewWords = getTodayReviewWords(allWords, state.wordProgress);
+  const reviewCount = reviewWords.length;
+  const sessionDone = hasDoneSessionToday(state.wordProgress);
+  const nextReviewIn = getNextReviewIn(state.wordProgress);
 
   // Mevcut seviye ilerleme
   const currentLevelProgress = useMemo(() => {
