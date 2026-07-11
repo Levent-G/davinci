@@ -61,8 +61,7 @@ export const calcNextReview = (prog, wasCorrect) => {
   }
 
   // Doğru — sonraki aşama
-  // TEST: 1 dakika | GERÇEK: 60 * 60 * 1000 (1 saat)
-  const INTERVAL = 1 * 60 * 1000;
+  const INTERVAL = 60 * 60 * 1000; // 1 saat
 
   if (
     [WORD_STATUS.LEARNING, WORD_STATUS.FAILED, WORD_STATUS.NEW].includes(status)

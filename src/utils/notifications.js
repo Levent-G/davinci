@@ -34,8 +34,7 @@ export async function cancelAllNotifications() {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
-// TEST: 1 dakika | GERÇEK: 60 * 60 * 1000 (1 saat)
-const INTERVAL = 1 * 60 * 1000;
+const INTERVAL = 60 * 60 * 1000; // 1 saat
 
 // İlk öğrenmeden sonra — 3 tekrar bildirimi planla
 export async function scheduleReviewNotifications(wordCount = 5) {
