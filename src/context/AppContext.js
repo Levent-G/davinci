@@ -3,7 +3,14 @@
 // AsyncStorage: hızlı okuma için lokal cache
 // Firebase: gerçek zamanlı sync ve admin panel için
 
-import React, { createContext, useContext, useReducer, useEffect } from "react";
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  useEffect,
+  useRef,
+} from "react";
+import { AppState } from "react-native";
 import { Storage } from "../utils/storage";
 import { ALL_WORDS } from "../data/wordDatabase";
 import { calculateStreak } from "../utils/davinciAlgorithm";
@@ -54,6 +61,11 @@ function appReducer(state, action) {
       return { ...state, isOnboardingDone: true };
     case "SET_FIRESTORE_WORDS":
       return { ...state, firestoreWords: action.payload };
+    case "SET_WORD_PROGRESS":
+      return {
+        ...state,
+        wordProgress: { ...state.wordProgress, ...action.payload },
+      };
     case "UPDATE_WORD_PROGRESS":
       return {
         ...state,
@@ -87,6 +99,24 @@ function appReducer(state, action) {
 }
 
 export function AppProvider({ children }) {
+  // Uygulama arka plandan öne gelince storage'dan progress yenile
+  const appStateRef = useRef(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", async (nextState) => {
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextState === "active"
+      ) {
+        // Öne geldi — storage'dan güncel progress'i yükle
+        try {
+          const saved = await Storage.getWordProgress();
+          if (saved) dispatch({ type: "SET_WORD_PROGRESS", payload: saved });
+        } catch {}
+      }
+      appStateRef.current = nextState;
+    });
+    return () => sub?.remove();
+  }, []);
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   useEffect(() => {

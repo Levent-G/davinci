@@ -1,6 +1,5 @@
-// src/utils/notifications.js
 import * as Notifications from "expo-notifications";
-import * as Device from "expo-device";
+import { Platform } from "react-native";
 import { useEffect, useRef } from "react";
 
 Notifications.setNotificationHandler({
@@ -11,9 +10,17 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// İzin iste + token al
+if (Platform.OS === "android") {
+  Notifications.setNotificationChannelAsync("default", {
+    name: "Da Vinci Words",
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: "#6C63FF",
+    sound: true,
+  });
+}
+
 export async function registerForPushNotifications() {
-  if (!Device.isDevice) return "simulator";
   const { status: existing } = await Notifications.getPermissionsAsync();
   let finalStatus = existing;
   if (existing !== "granted") {
@@ -23,105 +30,123 @@ export async function registerForPushNotifications() {
   return finalStatus;
 }
 
-// Tüm bildirimleri iptal et
 export async function cancelAllNotifications() {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
-// Öğrenme oturumu sonrası tekrar bildirimleri (3 saat + 8 saat + ertesi sabah)
-// TEST_MODE: true yapınca bildirimler 10/20 saniye sonra gelir
-const TEST_MODE = false;
+// TEST: 1 dakika | GERÇEK: 60 * 60 * 1000 (1 saat)
+const INTERVAL = 1 * 60 * 1000;
 
+// İlk öğrenmeden sonra — 3 tekrar bildirimi planla
 export async function scheduleReviewNotifications(wordCount = 5) {
+  await cancelAllNotifications();
   const now = new Date();
 
-  // 1. Tekrar — 3 saat sonra
-  const review1 = new Date(
-    now.getTime() + (TEST_MODE ? 10 * 1000 : 3 * 60 * 60 * 1000)
-  );
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "🔄 Tekrar Zamanı!",
-      body: `${wordCount} kelimeyi hatırlıyor musun? Da Vinci sizi çağırıyor...`,
+      title: "🔄 1. Tekrar Zamanı!",
+      body: `${wordCount} kelimeyi hatırlıyor musun?`,
       sound: true,
+      data: { type: "review_1" },
     },
-    trigger: { date: review1 },
+    trigger: { type: "date", date: new Date(now.getTime() + 1 * INTERVAL) },
   });
-
-  // 2. Tekrar — 8 saat sonra
-  const review2 = new Date(
-    now.getTime() + (TEST_MODE ? 20 * 1000 : 8 * 60 * 60 * 1000)
-  );
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "🧠 Akşam Tekrarı",
-      body: "Kelimeleri pekiştirme zamanı! Son tekrar...",
+      title: "🧠 2. Tekrar Zamanı!",
+      body: "Kelimeleri pekiştirme vakti!",
       sound: true,
+      data: { type: "review_2" },
     },
-    trigger: { date: review2 },
+    trigger: { type: "date", date: new Date(now.getTime() + 2 * INTERVAL) },
   });
-
-  // Ertesi sabah hatırlatma
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(9, 0, 0, 0);
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "☀️ Yeni Gün, Yeni Kelimeler",
-      body: "Bugün 5 yeni kelime öğrenmeye hazır mısın?",
+      title: "⭐ Son Tekrar!",
+      body: "Bugünün son tekrarı!",
       sound: true,
+      data: { type: "review_3" },
     },
-    trigger: { date: tomorrow },
+    trigger: { type: "date", date: new Date(now.getTime() + 3 * INTERVAL) },
   });
 }
 
-// Günlük hatırlatma — saat ve dakika parametreli
-export async function scheduleDailyReminder(hour = 20, minute = 0) {
-  // Önce eski günlük hatırlatmaları iptal et
-  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  for (const notif of scheduled) {
-    if (notif.content.title?.includes("Da Vinci seni bekliyor")) {
-      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
-    }
-  }
+// 1. tekrar bittikten sonra — 2. ve 3. tekrar bildirimi
+export async function scheduleNextReviewNotification(reviewType) {
+  await cancelAllNotifications();
+  const now = new Date();
 
+  if (reviewType === "review_1") {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "🧠 2. Tekrar Zamanı!",
+        body: "Kelimeleri pekiştirme vakti!",
+        sound: true,
+        data: { type: "review_2" },
+      },
+      trigger: { type: "date", date: new Date(now.getTime() + 1 * INTERVAL) },
+    });
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "⭐ Son Tekrar!",
+        body: "Bugünün son tekrarı!",
+        sound: true,
+        data: { type: "review_3" },
+      },
+      trigger: { type: "date", date: new Date(now.getTime() + 2 * INTERVAL) },
+    });
+  } else if (reviewType === "review_2") {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "⭐ Son Tekrar!",
+        body: "Bugünün son tekrarı!",
+        sound: true,
+        data: { type: "review_3" },
+      },
+      trigger: { type: "date", date: new Date(now.getTime() + 1 * INTERVAL) },
+    });
+  } else if (reviewType === "review_3") {
+    // Son tekrar bitti — ertesi sabah yeni kelimeler
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "☀️ Günaydın! Yeni kelimeler seni bekliyor",
+        body: "Bugün 5 yeni kelime!",
+        sound: true,
+        data: { type: "new_day" },
+      },
+      trigger: { type: "date", date: tomorrow },
+    });
+  }
+}
+
+// Günlük hatırlatma
+export async function scheduleDailyReminder(hour = 20, minute = 0) {
   await Notifications.scheduleNotificationAsync({
     content: {
       title: "🎯 Da Vinci seni bekliyor",
       body: "Bugünkü 5 kelimeni öğrenmek için 5 dakikan var mı?",
       sound: true,
     },
-    trigger: {
-      hour,
-      minute,
-      repeats: true,
-    },
+    trigger: { type: "daily", hour, minute },
   });
 }
 
-// Hook — bildirime tıklanınca çalışır
 export function useNotificationListener(onNotification) {
-  const notificationListener = useRef();
-  const notificationResponse = useRef();
-
+  const l1 = useRef();
+  const l2 = useRef();
   useEffect(() => {
-    notificationListener.current =
-      Notifications.addNotificationReceivedListener((notification) => {
-        if (onNotification) onNotification(notification);
-      });
-
-    notificationResponse.current =
-      Notifications.addNotificationResponseReceivedListener((response) => {
-        if (onNotification) onNotification(response.notification);
-      });
-
+    l1.current = Notifications.addNotificationReceivedListener((n) =>
+      onNotification?.(n)
+    );
+    l2.current = Notifications.addNotificationResponseReceivedListener((r) =>
+      onNotification?.(r.notification)
+    );
     return () => {
-      Notifications.removeNotificationSubscription(
-        notificationListener.current
-      );
-      Notifications.removeNotificationSubscription(
-        notificationResponse.current
-      );
+      Notifications.removeNotificationSubscription(l1.current);
+      Notifications.removeNotificationSubscription(l2.current);
     };
   }, []);
 }

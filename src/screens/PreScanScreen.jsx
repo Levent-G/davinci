@@ -460,10 +460,10 @@ const s = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 10,
   },
-  cardImage: { width: "100%", height: 130, borderRadius: 20, marginBottom: 2 },
+  cardImage: { width: "100%", height: 380, borderRadius: 20, marginBottom: 4 },
   cardImagePlaceholder: {
     width: "100%",
-    height: 70,
+    height: 120,
     alignItems: "center",
     justifyContent: "center",
   },

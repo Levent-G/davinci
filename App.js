@@ -22,7 +22,6 @@ export default function App() {
       }
     }).catch(() => {});
   }, []);
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

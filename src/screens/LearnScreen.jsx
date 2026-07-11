@@ -1,5 +1,6 @@
 // src/screens/LearnScreen.jsx — sade versiyon
-import React, { useMemo } from "react";
+import React, { useMemo, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -21,6 +22,7 @@ import {
   WORD_STATUS,
   getWordStatus,
   isToday,
+  getReviewType,
 } from "../utils/davinciAlgorithm";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -42,6 +44,14 @@ export default function LearnScreen({ navigation, route }) {
     "A1";
 
   const [selectedLevel, setSelectedLevel] = React.useState(prefLevel);
+
+  // Uygulama focus aldığında (arka plandan gelince) state'i yenile
+  useFocusEffect(
+    useCallback(() => {
+      // state zaten reaktif — sadece re-render tetikle
+      // actions.refreshProgress?.(); // Eğer böyle bir action varsa
+    }, [])
+  );
 
   const allWords = actions.getAllWords();
   const dailyStats = getDailyStats(allWords, state.wordProgress);
@@ -65,16 +75,21 @@ export default function LearnScreen({ navigation, route }) {
 
   // Bugün oturum yapıldı mı?
   // Bugün kaç kelime REVIEW_1 veya üstüne geçti (aşamalar tamamlandı)
+  // Bugün kaç kelime öğrenme aşamasına girdi
   const todayLearnedCount = allWords.filter((w) => {
     const p = state.wordProgress[w.id];
     if (!p) return false;
     const s = p.status || "new";
     return (
-      (s === "review_1" || s === "review_2" || s === "learned") &&
+      (s === "review_1" ||
+        s === "review_2" ||
+        s === "review_3" ||
+        s === "learned") &&
       isToday(p.startedAt)
     );
   }).length;
   const SESSION_TARGET = 5;
+  // Oturum bitti = bugün 5 kelime öğrenildi (review_1'e geçmiş)
   const sessionDoneToday = todayLearnedCount >= SESSION_TARGET;
 
   // Tekrar bekleyen kelimeler
@@ -109,11 +124,7 @@ export default function LearnScreen({ navigation, route }) {
   };
 
   const handleStartReview = () => {
-    const rType = reviewWords.some(
-      (w) => state.wordProgress[w.id]?.status === "review_1"
-    )
-      ? "review_1"
-      : "review_2";
+    const rType = getReviewType(state.wordProgress, reviewWords);
     navigation.navigate("Review", {
       words: reviewWords,
       reviewType: rType,

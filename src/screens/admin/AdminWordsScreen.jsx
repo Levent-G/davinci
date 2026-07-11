@@ -81,7 +81,12 @@ export default function AdminWordsScreen({ navigation }) {
           <Ionicons name="arrow-back" size={22} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Kelime Yönetimi</Text>
-        <Text style={styles.headerCount}>{ALL_WORDS.length} kelime</Text>
+        <TouchableOpacity
+          style={styles.addBtn}
+          onPress={() => navigation.navigate("AddWord")}
+        >
+          <Ionicons name="add" size={20} color="#fff" />
+        </TouchableOpacity>
       </View>
 
       {/* Arama */}
@@ -234,6 +239,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   headerCount: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm },
+  addBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   searchRow: {
     flexDirection: "row",

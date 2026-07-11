@@ -122,6 +122,11 @@ export default function LearningSessionScreen({ navigation, route }) {
     setAiLoading(false);
   };
 
+  const goNextRef = useRef(null);
+  useEffect(() => {
+    goNextRef.current = goNext;
+  });
+
   const goNext = async () => {
     if (stageIndex < 4) {
       // Sonraki aşama
@@ -171,6 +176,9 @@ export default function LearningSessionScreen({ navigation, route }) {
             );
           }).length + 1; // +1 çünkü bu kelime henüz dispatch edilmedi
         if (completedToday >= 5) {
+          try {
+            await scheduleReviewNotifications(completedToday);
+          } catch {}
           navigation.navigate("MainTabs", { screen: "Learn" });
         } else {
           navigation.goBack();
@@ -220,7 +228,9 @@ export default function LearningSessionScreen({ navigation, route }) {
         }),
       ]).start();
     }
-    setTimeout(() => goNext(), 1300);
+    setTimeout(() => {
+      if (goNextRef.current) goNextRef.current();
+    }, 1300);
   };
 
   const handleExit = () => {
@@ -792,9 +802,9 @@ const s = StyleSheet.create({
   },
   revealedMeaning: { fontSize: FONT_SIZES.xxl + 4, fontWeight: "900" },
   revealedHint: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-  image: { width: "100%", height: 180, borderRadius: RADIUS.xl },
+  image: { width: "100%", height: 450, borderRadius: RADIUS.xl },
   imagePlaceholder: {
-    height: 120,
+    height: 160,
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.xl,
     alignItems: "center",
