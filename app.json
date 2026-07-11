@@ -2,14 +2,14 @@
   "expo": {
     "name": "davinci",
     "slug": "davinci",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": false,
     "entryPoint": "./App.js",
     "android": {
-      "versionCode": 9,
+      "versionCode": 10,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#0A0E1A"
