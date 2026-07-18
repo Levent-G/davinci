@@ -12,9 +12,9 @@ export const STATUS = {
 };
 
 // TEST: 1 dakika | GERÇEK: 60 * 60 * 1000
-export const INTERVAL = 1 * 60 * 1000;
+export const INTERVAL = 60 * 60 * 1000; // 1 saat
 // TEST: 2 dakika | GERÇEK: sonraki gün
-export const NEXT_DAY = 2 * 60 * 1000;
+export const NEXT_DAY = 24 * 60 * 60 * 1000; // 1 gün
 
 export const isToday = (d) =>
   d && new Date(d).toDateString() === new Date().toDateString();

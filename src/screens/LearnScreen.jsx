@@ -103,52 +103,12 @@ export default function LearnScreen({ navigation, route }) {
   const sessionDoneToday = todayLearnedCount >= SESSION_TARGET;
   const reviewWords = React.useMemo(() => {
     try {
-      const { getReviewWords } = require("../utils/davinciAlgorithm");
-      const rw = getReviewWords(allWords, state.wordProgress);
-      console.log(
-        "[DEBUG] tick=" +
-          tick +
-          " reviewWords=" +
-          rw.length +
-          " progress keys=" +
-          Object.keys(state.wordProgress).length
-      );
-      Object.entries(state.wordProgress)
-        .slice(0, 3)
-        .forEach(([id, p]) => {
-          console.log(
-            "[DEBUG]",
-            id.slice(0, 8),
-            "status:",
-            p?.status,
-            "nextReviewAt:",
-            p?.nextReviewAt,
-            "due:",
-            p?.nextReviewAt
-              ? Date.now() >= new Date(p.nextReviewAt).getTime()
-              : "N/A"
-          );
-        });
-      return rw;
-    } catch (e) {
-      console.log("[DEBUG] ERROR:", e.message);
+      return getReviewWords(allWords, state.wordProgress);
+    } catch {
       return [];
     }
   }, [tick, state.wordProgress]);
   const hasReview = reviewWords.length > 0;
-  // hasReview debug
-  React.useEffect(() => {
-    console.log(
-      "[LEARN] hasReview:",
-      hasReview,
-      "hasRetry:",
-      hasRetryWords,
-      "hasNew:",
-      hasNewWords,
-      "sessionDone:",
-      sessionDoneToday
-    );
-  }, [tick]);
 
   // Kaç saat sonra tekrar?
   const nextReviewIn = getNextReviewIn(state.wordProgress);
