@@ -1,7 +1,3 @@
-// ReviewScreen — Tekrar ekranı
-// Fotoğraf + Kelime + Anlam + Sesli + Quiz
-// 2 yanlış → FAILED, hepsi doğru → sonraki status
-
 import React, { useState, useRef, useEffect } from "react";
 import {
   View,
@@ -19,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
-import { generateQuizOptions, calcNextReview } from "../utils/davinciAlgorithm";
+import { quizOptions, afterQuiz, STATUS } from "../utils/davinciAlgorithm";
 import { speakWord } from "../utils/textToSpeech";
 import { scheduleNextReviewNotification } from "../utils/notifications";
 
@@ -27,7 +23,7 @@ const { width } = Dimensions.get("window");
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
 
 export default function ReviewScreen({ navigation, route }) {
-  const { words = [], reviewType = "review_1" } = route.params || {};
+  const { words = [], reviewType = "r1" } = route.params || {};
   const { state, actions } = useApp();
   const allWords = actions.getAllWords();
 
@@ -36,51 +32,59 @@ export default function ReviewScreen({ navigation, route }) {
   const [quizAnswer, setQuizAnswer] = useState(null);
   const [imageUri, setImageUri] = useState(null);
   const [imgLoading, setImgLoading] = useState(false);
-  const [results, setResults] = useState([]);
   const [done, setDone] = useState(false);
+  const [results, setResults] = useState([]);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-
+  const fadeAnim = useRef(new Animated.Value(1)).current;
   const currentWord = words[idx] || null;
 
   useEffect(() => {
     if (!currentWord) return;
     setQuizAnswer(null);
-    setQuizOpts(generateQuizOptions(currentWord, allWords, 4));
+    setQuizOpts(quizOptions(currentWord, allWords));
     loadImage(currentWord.word);
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+    Animated.sequence([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start();
   }, [idx]);
 
-  const loadImage = async (word) => {
+  useEffect(() => {
+    if (done) scheduleNextReviewNotification(reviewType).catch(() => {});
+  }, [done]);
+
+  const loadImage = async (w) => {
     setImageUri(null);
     setImgLoading(true);
     try {
       const res = await fetch(
         `https://api.pexels.com/v1/search?query=${encodeURIComponent(
-          word
+          w
         )}&per_page=3`,
         { headers: { Authorization: PEXELS_KEY } }
       );
       const data = await res.json();
-      if (data.photos?.length > 0)
-        setImageUri(data.photos[0].src.large || data.photos[0].src.medium);
-    } catch {}
-    setImgLoading(false);
+      if (data.photos?.length > 0) setImageUri(data.photos[0].src.medium);
+    } catch {
+    } finally {
+      setImgLoading(false);
+    }
   };
 
   const handleAnswer = async (opt) => {
     if (quizAnswer) return;
     setQuizAnswer(opt);
 
-    const isCorrect = opt.isCorrect;
-    const prog = state.wordProgress[currentWord.id] || {};
-
-    if (!isCorrect) {
+    if (!opt.correct) {
       Animated.sequence([
         Animated.timing(shakeAnim, {
           toValue: 10,
@@ -111,31 +115,31 @@ export default function ReviewScreen({ navigation, route }) {
     }
 
     // Progress güncelle
-    const newProg = calcNextReview({ ...prog }, isCorrect);
-    await actions.updateWordProgress(currentWord.id, { ...prog, ...newProg });
+    const prog = state.wordProgress[currentWord.id] || {};
+    const newProg = afterQuiz(prog, opt.correct);
+    try {
+      await actions.updateWordProgress(currentWord.id, { ...prog, ...newProg });
+    } catch {}
 
-    const newResults = [...results, { word: currentWord, correct: isCorrect }];
+    const newResults = [
+      ...results,
+      { word: currentWord, correct: opt.correct },
+    ];
     setResults(newResults);
 
     setTimeout(() => {
       shakeAnim.setValue(0);
-      if (idx >= words.length - 1) {
-        setDone(true);
-      } else {
-        fadeAnim.setValue(0);
-        setIdx((i) => i + 1);
-      }
+      if (idx >= words.length - 1) setDone(true);
+      else setIdx((i) => i + 1);
     }, 1500);
   };
 
-  // Tamamlandı ekranı
+  // DONE ekranı
   if (done) {
     const correct = results.filter((r) => r.correct).length;
-    const score = Math.round((correct / words.length) * 100);
-    const isLast = reviewType === "review_3";
-    // Bildirim planla
-    scheduleNextReviewNotification(reviewType).catch(() => {});
-
+    const score =
+      words.length > 0 ? Math.round((correct / words.length) * 100) : 0;
+    const isLast = reviewType === "r3";
     return (
       <SafeAreaView style={s.container}>
         <View style={s.doneBox}>
@@ -154,7 +158,7 @@ export default function ReviewScreen({ navigation, route }) {
               </Text>
               <Text style={s.doneStatLabel}>Doğru</Text>
             </View>
-            <View style={s.doneStatDivider} />
+            <View style={s.doneStatDiv} />
             <View style={s.doneStat}>
               <Text style={[s.doneStatNum, { color: COLORS.error }]}>
                 {words.length - correct}
@@ -162,39 +166,46 @@ export default function ReviewScreen({ navigation, route }) {
               <Text style={s.doneStatLabel}>Yanlış</Text>
             </View>
           </View>
-          {!isLast && (
-            <View style={s.nextInfo}>
-              <Ionicons
-                name="time-outline"
-                size={16}
-                color={COLORS.textMuted}
-              />
-              <Text style={s.nextInfoText}>1 saat sonra tekrar zamanı</Text>
-            </View>
-          )}
-          {isLast && (
-            <View style={s.nextInfo}>
-              <Ionicons
-                name="checkmark-circle"
-                size={16}
-                color={COLORS.success}
-              />
-              <Text style={[s.nextInfoText, { color: COLORS.success }]}>
-                {score >= 60
-                  ? "Kelimeler öğrenildi! Yarın yeni kelimeler gelecek."
-                  : "Bazı kelimeler yarın tekrar gelecek."}
-              </Text>
-            </View>
-          )}
+          <View style={s.callBox}>
+            <Text style={s.callEmoji}>🧠</Text>
+            <Text style={s.callTxt}>
+              Da Vinci sizi tekrar çağıracak{"\n"}
+              {isLast
+                ? score >= 60
+                  ? "Yarın yeni kelimeler gelecek!"
+                  : "Eksik kelimeler yarın tekrar gelecek."
+                : "1 dakika sonra tekrar zamanı!"}
+            </Text>
+          </View>
           <TouchableOpacity
             style={s.doneBtn}
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              const level = words[0]?.level || "A1";
+              if (reviewType === "r1" && route.params?.fromRetry) {
+                const retryCount = words.length;
+                const SESSION_TARGET = 5;
+                if (retryCount < SESSION_TARGET) {
+                  // Kalan kelimeler için PreScan'a geç
+                  navigation.navigate("PreScan", {
+                    level,
+                    sessionCount: retryCount,
+                  });
+                } else {
+                  // 5 RETRY — PreScan yok, direkt Learn'e dön
+                  navigation.navigate("MainTabs", { screen: "Learn" });
+                }
+              } else if (isLast) {
+                navigation.navigate("MainTabs", { screen: "Learn" });
+              } else {
+                navigation.goBack();
+              }
+            }}
           >
             <LinearGradient
               colors={[COLORS.accent, COLORS.accent + "CC"]}
               style={s.doneBtnGrad}
             >
-              <Text style={s.doneBtnText}>Tamam →</Text>
+              <Text style={s.doneBtnTxt}>Tamam →</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
@@ -216,9 +227,9 @@ export default function ReviewScreen({ navigation, route }) {
         </TouchableOpacity>
         <View style={{ alignItems: "center" }}>
           <Text style={s.headerTitle}>
-            {reviewType === "review_1"
+            {reviewType === "r1"
               ? "1. Tekrar"
-              : reviewType === "review_2"
+              : reviewType === "r2"
               ? "2. Tekrar"
               : "3. Tekrar"}
           </Text>
@@ -229,7 +240,6 @@ export default function ReviewScreen({ navigation, route }) {
         <View style={{ width: 36 }} />
       </View>
 
-      {/* Progress */}
       <View style={s.progressBg}>
         <View
           style={[s.progressFill, { width: `${(idx / words.length) * 100}%` }]}
@@ -242,7 +252,7 @@ export default function ReviewScreen({ navigation, route }) {
         showsVerticalScrollIndicator={false}
       >
         {/* Büyük fotoğraf */}
-        <View style={s.imageBox}>
+        <View style={s.imgBox}>
           {imageUri ? (
             <Image
               source={{ uri: imageUri }}
@@ -250,7 +260,7 @@ export default function ReviewScreen({ navigation, route }) {
               resizeMode="cover"
             />
           ) : (
-            <View style={s.imagePlaceholder}>
+            <View style={s.imgPH}>
               {imgLoading ? (
                 <ActivityIndicator size="large" color={COLORS.accent} />
               ) : (
@@ -264,25 +274,25 @@ export default function ReviewScreen({ navigation, route }) {
           )}
         </View>
 
-        {/* Kelime kartı — her zaman görünür */}
+        {/* Kelime kartı */}
         <View style={s.wordCard}>
           <Text style={s.wordText}>{currentWord.word}</Text>
           <Text style={s.wordPos}>{currentWord.partOfSpeech}</Text>
-          <Text style={s.wordTranslation}>{currentWord.translation}</Text>
+          {/* Türkçe anlam quiz sırasında gizli */}
           <TouchableOpacity
             style={s.speakBtn}
             onPress={() => speakWord(currentWord.word)}
           >
             <Ionicons
               name="volume-high-outline"
-              size={22}
+              size={12}
               color={COLORS.accent}
             />
-            <Text style={s.speakText}>Sesli Dinle</Text>
+            <Text style={s.speakTxt}>Sesli Dinle</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Quiz — her zaman göster */}
+        {/* Quiz */}
         <View style={s.quizBox}>
           <Text style={s.quizQ}>Bu kelimenin Türkçe anlamı nedir?</Text>
           <Animated.View
@@ -293,7 +303,7 @@ export default function ReviewScreen({ navigation, route }) {
                 border = COLORS.border,
                 color = COLORS.textPrimary;
               if (quizAnswer) {
-                if (opt.isCorrect) {
+                if (opt.correct) {
                   bg = "rgba(100,220,150,0.15)";
                   border = COLORS.success;
                   color = COLORS.success;
@@ -313,17 +323,17 @@ export default function ReviewScreen({ navigation, route }) {
                   onPress={() => handleAnswer(opt)}
                   disabled={!!quizAnswer}
                 >
-                  <Text style={[s.optionText, { color }]}>
+                  <Text style={[s.optionTxt, { color }]}>
                     {opt.word.translation}
                   </Text>
-                  {quizAnswer && opt.isCorrect && (
+                  {quizAnswer && opt.correct && (
                     <Ionicons
                       name="checkmark-circle"
                       size={20}
                       color={COLORS.success}
                     />
                   )}
-                  {quizAnswer === opt && !opt.isCorrect && (
+                  {quizAnswer === opt && !opt.correct && (
                     <Ionicons
                       name="close-circle"
                       size={20}
@@ -339,10 +349,10 @@ export default function ReviewScreen({ navigation, route }) {
               style={[
                 s.feedback,
                 {
-                  borderColor: quizAnswer.isCorrect
+                  borderColor: quizAnswer.correct
                     ? COLORS.success
                     : COLORS.error,
-                  backgroundColor: quizAnswer.isCorrect
+                  backgroundColor: quizAnswer.correct
                     ? "rgba(100,220,150,0.1)"
                     : "rgba(255,100,100,0.1)",
                 },
@@ -350,13 +360,11 @@ export default function ReviewScreen({ navigation, route }) {
             >
               <Text
                 style={[
-                  s.feedbackText,
-                  {
-                    color: quizAnswer.isCorrect ? COLORS.success : COLORS.error,
-                  },
+                  s.feedbackTxt,
+                  { color: quizAnswer.correct ? COLORS.success : COLORS.error },
                 ]}
               >
-                {quizAnswer.isCorrect
+                {quizAnswer.correct
                   ? "✅ Doğru!"
                   : `❌ Doğrusu: ${currentWord.translation}`}
               </Text>
@@ -394,14 +402,14 @@ const s = StyleSheet.create({
   progressBg: { height: 3, backgroundColor: COLORS.border },
   progressFill: { height: 3, backgroundColor: COLORS.accent },
   scroll: { paddingHorizontal: SPACING.lg, paddingBottom: 40 },
-  imageBox: {
+  imgBox: {
     marginVertical: SPACING.md,
     borderRadius: RADIUS.xl,
     overflow: "hidden",
   },
-  image: { width: "100%", height: 280 },
-  imagePlaceholder: {
-    height: 240,
+  image: { width: "100%", height: 300 },
+  imgPH: {
+    height: 100,
     backgroundColor: COLORS.backgroundCard,
     alignItems: "center",
     justifyContent: "center",
@@ -420,7 +428,7 @@ const s = StyleSheet.create({
     borderColor: COLORS.border,
   },
   wordText: {
-    fontSize: 44,
+    fontSize: 24,
     fontWeight: "900",
     color: COLORS.textPrimary,
     letterSpacing: -1,
@@ -444,18 +452,11 @@ const s = StyleSheet.create({
     paddingVertical: SPACING.sm,
     borderRadius: RADIUS.full,
   },
-  speakText: {
+  speakTxt: {
     color: COLORS.accent,
     fontWeight: "700",
     fontSize: FONT_SIZES.sm,
   },
-  nextBtn: {
-    borderRadius: RADIUS.full,
-    overflow: "hidden",
-    marginBottom: SPACING.lg,
-  },
-  nextBtnGrad: { paddingVertical: SPACING.md + 2, alignItems: "center" },
-  nextBtnText: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "800" },
   quizBox: { gap: SPACING.md },
   quizQ: {
     color: COLORS.textSecondary,
@@ -472,9 +473,9 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.lg,
     padding: SPACING.md + 2,
   },
-  optionText: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
+  optionTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
   feedback: { borderWidth: 1.5, borderRadius: RADIUS.lg, padding: SPACING.md },
-  feedbackText: { fontWeight: "600", fontSize: FONT_SIZES.sm },
+  feedbackTxt: { fontWeight: "600", fontSize: FONT_SIZES.sm },
   doneBox: {
     flex: 1,
     alignItems: "center",
@@ -508,25 +509,27 @@ const s = StyleSheet.create({
   },
   doneStats: { flexDirection: "row", alignItems: "center" },
   doneStat: { alignItems: "center", paddingHorizontal: SPACING.xl, gap: 4 },
-  doneStatDivider: { width: 1, height: 40, backgroundColor: COLORS.border },
+  doneStatDiv: { width: 1, height: 40, backgroundColor: COLORS.border },
   doneStatNum: { fontSize: FONT_SIZES.xxl, fontWeight: "800" },
   doneStatLabel: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-  nextInfo: {
+  callBox: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SPACING.sm,
+    gap: SPACING.md,
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.lg,
     padding: SPACING.md,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  nextInfoText: {
+  callEmoji: { fontSize: 28 },
+  callTxt: {
     color: COLORS.textSecondary,
     fontSize: FONT_SIZES.sm,
     flex: 1,
+    lineHeight: 20,
   },
   doneBtn: { width: "100%", borderRadius: RADIUS.full, overflow: "hidden" },
   doneBtnGrad: { paddingVertical: SPACING.md + 2, alignItems: "center" },
-  doneBtnText: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "800" },
+  doneBtnTxt: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "800" },
 });

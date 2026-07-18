@@ -22,15 +22,14 @@ import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import { speakWord } from "../utils/textToSpeech";
+import { STATUS, getNewWords } from "../utils/davinciAlgorithm";
+import { consume } from "../utils/sessionBridge";
 import { scheduleReviewNotifications } from "../utils/notifications";
-import { WORD_STATUS } from "../utils/davinciAlgorithm";
-import { consumeWordCompleted, setWordCompleted } from "../utils/sessionBridge";
 
 const { width } = Dimensions.get("window");
 const SWIPE_THRESHOLD = width * 0.25;
 const SESSION_TARGET = 5;
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
-
 const LEVEL_COLORS = {
   A1: "#4ECDC4",
   A2: "#45B7D1",
@@ -41,43 +40,21 @@ const LEVEL_COLORS = {
 };
 
 export default function PreScanScreen({ navigation, route }) {
-  const { level = "A1" } = route.params || {};
+  const { level = "A1", sessionCount: initialCount = 0 } = route.params || {};
   const { state, actions } = useApp();
   const color = LEVEL_COLORS[level] || COLORS.accent;
 
-  // Havuz — bir kez oluştur
+  // Bu oturumda kaç kelime aşamalardan geçti
+  const sessionCountRef = useRef(initialCount);
+  const [sessionCount, setSessionCount] = useState(initialCount);
+
+  // Havuz — RETRY önce, sonra NEW
   const pool = useMemo(() => {
-    return actions
-      .getAllWords()
-      .filter((w) => {
-        if (w.level !== level) return false;
-        const p = state.wordProgress[w.id];
-        if (!p) return true;
-        return (
-          p.status !== WORD_STATUS.KNOWN && p.status !== WORD_STATUS.LEARNED
-        );
-      })
-      .sort(() => Math.random() - 0.5);
-  }, []); // eslint-disable-line
+    return getNewWords(actions.getAllWords(), state.wordProgress, level, 50);
+  }, [state.wordProgress]);
 
-  const poolIdSet = useMemo(() => new Set(pool.map((w) => w.id)), [pool]);
-
-  // Bugün bu pool'dan aşamaları tamamlanan kelimeler — wordProgress'ten
-  const learnedToday = useMemo(() => {
-    const todayStr = new Date().toDateString();
-    return pool.filter((w) => {
-      const p = state.wordProgress[w.id];
-      if (!p) return false;
-      if (p.status === "known") return false;
-      if (!["review_1", "review_2", "learned"].includes(p.status || ""))
-        return false;
-      return p.startedAt && new Date(p.startedAt).toDateString() === todayStr;
-    }).length;
-  }, [state.wordProgress]); // pool sabit, wordProgress değişince yeniden hesapla
-
-  // cardIdx: pool'da hangi kelimeyi gösteriyoruz
-  // displayIdx: animasyon bitmeden değişmesin (flash önleme)
   const cardIdxRef = useRef(0);
+  const displayIdxRef = useRef(0);
   const swipingRef = useRef(false);
   const isFirstFocus = useRef(true);
 
@@ -87,7 +64,6 @@ export default function PreScanScreen({ navigation, route }) {
 
   const pan = useRef(new Animated.ValueXY()).current;
 
-  // Görsel yükle
   const loadImage = useCallback(async (word) => {
     setImageUri(null);
     setImgLoading(true);
@@ -100,8 +76,10 @@ export default function PreScanScreen({ navigation, route }) {
       );
       const data = await res.json();
       if (data.photos?.length > 0) setImageUri(data.photos[0].src.medium);
-    } catch {}
-    setImgLoading(false);
+    } catch {
+    } finally {
+      setImgLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -117,23 +95,30 @@ export default function PreScanScreen({ navigation, route }) {
 
       if (isFirstFocus.current) {
         isFirstFocus.current = false;
+        consume();
         return;
       }
 
-      // Aşamalar bitti sinyali geldi mi?
-      const completed = consumeWordCompleted();
-
-      // Sonraki kelimeye geç
-      setDisplayIdx(cardIdxRef.current);
-
+      const completed = consume();
       if (completed) {
-        // Bildirim planla — learnedToday useMemo'dan güncellenecek
-        scheduleReviewNotifications(SESSION_TARGET).catch(() => {});
-      }
-    }, [])
-  ); // eslint-disable-line
+        const newCount = sessionCountRef.current + 1;
+        sessionCountRef.current = newCount;
+        setSessionCount(newCount);
 
-  const animateOut = (toX, cb) => {
+        if (newCount >= SESSION_TARGET) {
+          // 5 kelime tamamlandı
+          scheduleReviewNotifications(newCount).catch(() => {});
+          navigation.navigate("MainTabs", { screen: "Learn" });
+          return;
+        }
+      }
+      // Sonraki kelimeye geç
+      displayIdxRef.current = cardIdxRef.current;
+      setDisplayIdx(cardIdxRef.current);
+    }, [])
+  );
+
+  const animateOut = (toX, cb, advanceDisplay = false) => {
     Animated.timing(pan, {
       toValue: { x: toX, y: 0 },
       duration: 220,
@@ -141,6 +126,9 @@ export default function PreScanScreen({ navigation, route }) {
     }).start(() => {
       pan.setValue({ x: 0, y: 0 });
       swipingRef.current = false;
+      if (advanceDisplay) {
+        setDisplayIdx(cardIdxRef.current);
+      }
       cb();
     });
   };
@@ -148,61 +136,51 @@ export default function PreScanScreen({ navigation, route }) {
   const doKnow = () => {
     const word = pool[cardIdxRef.current];
     if (!word) return;
-    const prog = state.wordProgress[word.id] || {};
     actions.updateWordProgress(word.id, {
-      ...prog,
-      status: WORD_STATUS.KNOWN,
-      masteryLevel: 5,
+      ...(state.wordProgress[word.id] || {}),
+      status: STATUS.KNOWN,
       knownByUser: true,
       lastReviewDate: new Date().toISOString(),
     });
     cardIdxRef.current += 1;
-    setDisplayIdx(cardIdxRef.current);
+    // displayIdx animateOut callback'inde güncelleniyor
   };
 
   const doDontKnow = () => {
     const word = pool[cardIdxRef.current];
     if (!word) return;
-    const prog = state.wordProgress[word.id] || {};
     actions.updateWordProgress(word.id, {
-      ...prog,
-      status: WORD_STATUS.LEARNING,
+      ...(state.wordProgress[word.id] || {}),
+      status: STATUS.LEARNING,
       startedAt: new Date().toISOString(),
     });
     cardIdxRef.current += 1;
-    // displayIdx animasyon callback'inde güncellenir (useFocusEffect'te)
+    // displayIdx artırma — animasyon callback'inde zaten artıyor
+    // Ama navigate öncesi kartı gizle
     navigation.navigate("LearningSession", {
-      level,
       words: [word],
-      mode: "learn",
+      level,
+      mode: "prescan",
     });
   };
 
   const onKnow = () => {
     if (swipingRef.current) return;
     swipingRef.current = true;
-    animateOut(width * 1.5, doKnow);
+    animateOut(width * 1.5, doKnow, true);
   };
-
   const onDontKnow = () => {
     if (swipingRef.current) return;
     swipingRef.current = true;
     animateOut(-width * 1.5, doDontKnow);
   };
 
-  const onKnowRef = useRef(onKnow);
-  const onDontKnowRef = useRef(onDontKnow);
+  const onKnowRef = useRef(onKnow),
+    onDontKnowRef = useRef(onDontKnow);
   useEffect(() => {
     onKnowRef.current = onKnow;
     onDontKnowRef.current = onDontKnow;
   });
-
-  // learnedToday 5 olunca LearnScreen'e git
-  useEffect(() => {
-    if (learnedToday >= SESSION_TARGET) {
-      navigation.navigate("MainTabs", { screen: "Learn" });
-    }
-  }, [learnedToday]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -237,25 +215,23 @@ export default function PreScanScreen({ navigation, route }) {
     outputRange: [1, 0],
     extrapolate: "clamp",
   });
-
   const displayWord = pool[displayIdx] || null;
 
-  if (!displayWord) {
+  if (!displayWord)
     return (
       <SafeAreaView style={s.container}>
-        <View style={s.doneBox}>
+        <View style={s.center}>
           <Text style={s.doneEmoji}>🎉</Text>
-          <Text style={s.doneTitle}>Bu seviyedeki tüm kelimeleri gördün!</Text>
+          <Text style={s.doneTitle}>Tüm kelimeleri gördün!</Text>
           <TouchableOpacity
-            style={[s.btn1, { backgroundColor: color }]}
+            style={[s.btn, { backgroundColor: color }]}
             onPress={() => navigation.goBack()}
           >
-            <Text style={s.btn1Text}>Geri Dön →</Text>
+            <Text style={s.btnText}>Geri Dön</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
-  }
 
   return (
     <SafeAreaView style={s.container}>
@@ -269,8 +245,7 @@ export default function PreScanScreen({ navigation, route }) {
         <View style={{ alignItems: "center" }}>
           <Text style={s.headerTitle}>Bu kelimeyi biliyor musun?</Text>
           <Text style={s.headerSub}>
-            {Math.min(learnedToday, SESSION_TARGET)} / {SESSION_TARGET}{" "}
-            öğrenildi
+            {sessionCount} / {SESSION_TARGET} öğrenildi
           </Text>
         </View>
         <View style={{ width: 36 }} />
@@ -281,9 +256,7 @@ export default function PreScanScreen({ navigation, route }) {
           style={[
             s.progressFill,
             {
-              width: `${
-                (Math.min(learnedToday, SESSION_TARGET) / SESSION_TARGET) * 100
-              }%`,
+              width: `${(sessionCount / SESSION_TARGET) * 100}%`,
               backgroundColor: color,
             },
           ]}
@@ -332,13 +305,12 @@ export default function PreScanScreen({ navigation, route }) {
               resizeMode="cover"
             />
           ) : imgLoading ? (
-            <View style={s.cardImagePlaceholder}>
+            <View style={s.cardImgPH}>
               <ActivityIndicator size="small" color={color} />
             </View>
           ) : null}
-
-          <View style={[s.levelTag, { backgroundColor: color + "20" }]}>
-            <Text style={[s.levelTagTxt, { color }]}>
+          <View style={[s.tag, { backgroundColor: color + "20" }]}>
+            <Text style={[s.tagTxt, { color }]}>
               {displayWord.level} • {displayWord.partOfSpeech || "word"}
             </Text>
           </View>
@@ -362,17 +334,27 @@ export default function PreScanScreen({ navigation, route }) {
 
       <View style={s.btns}>
         <TouchableOpacity
-          style={[s.swipeBtn, s.swipeDont]}
+          style={[
+            s.swipeBtn,
+            {
+              backgroundColor: "rgba(255,80,80,0.1)",
+              borderColor: COLORS.error + "60",
+            },
+          ]}
           onPress={onDontKnow}
-          activeOpacity={0.8}
         >
           <Ionicons name="close" size={28} color={COLORS.error} />
           <Text style={[s.swipeTxt, { color: COLORS.error }]}>Bilmiyorum</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.swipeBtn, s.swipeKnow]}
+          style={[
+            s.swipeBtn,
+            {
+              backgroundColor: "rgba(80,200,120,0.1)",
+              borderColor: COLORS.success + "60",
+            },
+          ]}
           onPress={onKnow}
-          activeOpacity={0.8}
         >
           <Ionicons name="checkmark" size={28} color={COLORS.success} />
           <Text style={[s.swipeTxt, { color: COLORS.success }]}>Biliyorum</Text>
@@ -460,19 +442,19 @@ const s = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 10,
   },
-  cardImage: { width: "100%", height: 380, borderRadius: 20, marginBottom: 4 },
-  cardImagePlaceholder: {
+  cardImage: { width: "100%", height: 300, borderRadius: 20, marginBottom: 4 },
+  cardImgPH: {
     width: "100%",
-    height: 120,
+    height: 100,
     alignItems: "center",
     justifyContent: "center",
   },
-  levelTag: {
+  tag: {
     paddingHorizontal: SPACING.md,
     paddingVertical: 4,
     borderRadius: RADIUS.full,
   },
-  levelTagTxt: { fontSize: 11, fontWeight: "800" },
+  tagTxt: { fontSize: 11, fontWeight: "800" },
   word: {
     fontSize: 40,
     fontWeight: "900",
@@ -523,20 +505,11 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.xl,
     borderWidth: 1.5,
   },
-  swipeDont: {
-    backgroundColor: "rgba(255,80,80,0.1)",
-    borderColor: COLORS.error + "60",
-  },
-  swipeKnow: {
-    backgroundColor: "rgba(80,200,120,0.1)",
-    borderColor: COLORS.success + "60",
-  },
   swipeTxt: { fontWeight: "700", fontSize: FONT_SIZES.sm },
-  doneBox: {
+  center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: SPACING.xl,
     gap: SPACING.lg,
   },
   doneEmoji: { fontSize: 60 },
@@ -546,10 +519,10 @@ const s = StyleSheet.create({
     fontWeight: "800",
     textAlign: "center",
   },
-  btn1: {
+  btn: {
     paddingHorizontal: 40,
     paddingVertical: SPACING.md + 2,
     borderRadius: RADIUS.full,
   },
-  btn1Text: { color: "#fff", fontWeight: "800", fontSize: FONT_SIZES.lg },
+  btnText: { color: "#fff", fontWeight: "800", fontSize: FONT_SIZES.lg },
 });

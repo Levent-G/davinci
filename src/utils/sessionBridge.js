@@ -1,10 +1,10 @@
-// Sadece "aşamalar tamamlandı" sinyali
-let _wordCompleted = false;
-export const setWordCompleted = () => {
-  _wordCompleted = true;
+// Ekranlar arası sinyal
+let _signal = false;
+export const signal = () => {
+  _signal = true;
 };
-export const consumeWordCompleted = () => {
-  const v = _wordCompleted;
-  _wordCompleted = false;
+export const consume = () => {
+  const v = _signal;
+  _signal = false;
   return v;
 };

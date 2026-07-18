@@ -1,5 +1,5 @@
 // src/screens/LearnScreen.jsx — sade versiyon
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
@@ -23,6 +23,9 @@ import {
   getWordStatus,
   isToday,
   getReviewType,
+  STATUS,
+  getReviewWords,
+  getReviewType as getRT,
 } from "../utils/davinciAlgorithm";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -46,10 +49,10 @@ export default function LearnScreen({ navigation, route }) {
   const [selectedLevel, setSelectedLevel] = React.useState(prefLevel);
 
   // Uygulama focus aldığında (arka plandan gelince) state'i yenile
+  const [tick, setTick] = useState(0);
   useFocusEffect(
     useCallback(() => {
-      // state zaten reaktif — sadece re-render tetikle
-      // actions.refreshProgress?.(); // Eğer böyle bir action varsa
+      setTick((t) => t + 1); // re-render tetikle — isDue kontrolü güncellensin
     }, [])
   );
 
@@ -64,7 +67,13 @@ export default function LearnScreen({ navigation, route }) {
       const p = state.wordProgress[w.id];
       if (!p) return false;
       const s = p.status || getWordStatus(p);
-      return [WORD_STATUS.LEARNED, WORD_STATUS.KNOWN].includes(s);
+      return [
+        "done",
+        "learned",
+        "known",
+        WORD_STATUS.LEARNED,
+        WORD_STATUS.KNOWN,
+      ].includes(s);
     }).length;
     return {
       pct: Math.round((learned / words.length) * 100),
@@ -76,35 +85,102 @@ export default function LearnScreen({ navigation, route }) {
   // Bugün oturum yapıldı mı?
   // Bugün kaç kelime REVIEW_1 veya üstüne geçti (aşamalar tamamlandı)
   // Bugün kaç kelime öğrenme aşamasına girdi
+  const SESSION_TARGET = 5;
   const todayLearnedCount = allWords.filter((w) => {
     const p = state.wordProgress[w.id];
     if (!p) return false;
     const s = p.status || "new";
-    return (
-      (s === "review_1" ||
-        s === "review_2" ||
-        s === "review_3" ||
-        s === "learned") &&
-      isToday(p.startedAt)
-    );
+    if (!["r1", "r2", "r3", "done", "retry"].includes(s)) return false;
+    return p.startedAt && isToday(p.startedAt);
   }).length;
-  const SESSION_TARGET = 5;
-  // Oturum bitti = bugün 5 kelime öğrenildi (review_1'e geçmiş)
-  const sessionDoneToday = todayLearnedCount >= SESSION_TARGET;
 
-  // Tekrar bekleyen kelimeler
-  const reviewWords = getTodayReviewWords(allWords, state.wordProgress);
+  // Bugün done olan kelimeler NEXT_DAY geçti mi? Geçtiyse yeni kelimeler açılır
+  const doneWordsReady = allWords.some((w) => {
+    const p = state.wordProgress[w.id];
+    if (!p || p.status !== "done") return false;
+    return p.nextReviewAt && Date.now() >= new Date(p.nextReviewAt).getTime();
+  });
+  const sessionDoneToday = todayLearnedCount >= SESSION_TARGET;
+  const reviewWords = React.useMemo(() => {
+    try {
+      const { getReviewWords } = require("../utils/davinciAlgorithm");
+      const rw = getReviewWords(allWords, state.wordProgress);
+      console.log(
+        "[DEBUG] tick=" +
+          tick +
+          " reviewWords=" +
+          rw.length +
+          " progress keys=" +
+          Object.keys(state.wordProgress).length
+      );
+      Object.entries(state.wordProgress)
+        .slice(0, 3)
+        .forEach(([id, p]) => {
+          console.log(
+            "[DEBUG]",
+            id.slice(0, 8),
+            "status:",
+            p?.status,
+            "nextReviewAt:",
+            p?.nextReviewAt,
+            "due:",
+            p?.nextReviewAt
+              ? Date.now() >= new Date(p.nextReviewAt).getTime()
+              : "N/A"
+          );
+        });
+      return rw;
+    } catch (e) {
+      console.log("[DEBUG] ERROR:", e.message);
+      return [];
+    }
+  }, [tick, state.wordProgress]);
   const hasReview = reviewWords.length > 0;
+  // hasReview debug
+  React.useEffect(() => {
+    console.log(
+      "[LEARN] hasReview:",
+      hasReview,
+      "hasRetry:",
+      hasRetryWords,
+      "hasNew:",
+      hasNewWords,
+      "sessionDone:",
+      sessionDoneToday
+    );
+  }, [tick]);
 
   // Kaç saat sonra tekrar?
   const nextReviewIn = getNextReviewIn(state.wordProgress);
 
   // Yeni kelimeler
   const newWords = useMemo(
-    () => getDailyWords(allWords, state.wordProgress, 5, selectedLevel),
-    [selectedLevel, allWords.length, Object.keys(state.wordProgress).length]
+    () => getDailyWords(allWords, state.wordProgress, selectedLevel, 5),
+    [
+      selectedLevel,
+      allWords.length,
+      Object.keys(state.wordProgress).length,
+      tick,
+    ]
   );
   const hasNewWords = newWords.length > 0;
+
+  // Daha önce başlanmış (FAILED) kelime var mı
+  const hasRetryWords = React.useMemo(() => {
+    return allWords.some((w) => {
+      const p = state.wordProgress[w.id];
+      if (!p) return false;
+      if (!["retry", "failed"].includes(p.status)) return false;
+      if (w.level !== selectedLevel) return false;
+      return (
+        !p.nextReviewAt || Date.now() >= new Date(p.nextReviewAt).getTime()
+      );
+    });
+  }, [tick, state.wordProgress, selectedLevel]);
+  const hasFailedWords = hasRetryWords;
+  const btnLabel = hasFailedWords
+    ? "Öğrenmeye Devam Et →"
+    : "Öğrenmeye Başla →";
 
   // ReviewType belirle
   const getReviewType = () => {
@@ -116,19 +192,40 @@ export default function LearnScreen({ navigation, route }) {
 
   const handleStartSession = () => {
     if (!newWords.length) return;
-    // Önce PreScan — biliyorum/bilmiyorum taraması
+
+    // retry kelimeler varsa direkt ReviewScreen'e git
+    if (hasRetryWords) {
+      const retryWords = allWords.filter((w) => {
+        if (w.level !== selectedLevel) return false;
+        const p = state.wordProgress[w.id];
+        return p?.status === "retry" || p?.status === "failed";
+      });
+      if (retryWords.length > 0) {
+        navigation.navigate("Review", {
+          words: retryWords,
+          reviewType: "r1",
+          fromRetry: true,
+          level: selectedLevel,
+        });
+        return;
+      }
+    }
+
+    // Yeni kelimeler — PreScan (biliyorum/bilmiyorum)
+    const onlyNew = newWords.filter((w) => {
+      const s = state.wordProgress[w.id]?.status;
+      return !s || s === "new";
+    });
     navigation.navigate("PreScan", {
-      words: newWords,
+      words: onlyNew.length ? onlyNew : newWords,
       level: selectedLevel,
     });
   };
 
   const handleStartReview = () => {
-    const rType = getReviewType(state.wordProgress, reviewWords);
-    navigation.navigate("Review", {
-      words: reviewWords,
-      reviewType: rType,
-    });
+    const { getReviewType: grt } = require("../utils/davinciAlgorithm");
+    const rType = grt(reviewWords, state.wordProgress);
+    navigation.navigate("Review", { words: reviewWords, reviewType: rType });
   };
 
   const handleQuickScan = () => {
@@ -179,7 +276,13 @@ export default function LearnScreen({ navigation, route }) {
               const p = state.wordProgress[w.id];
               if (!p) return false;
               const s = p.status || getWordStatus(p);
-              return [WORD_STATUS.LEARNED, WORD_STATUS.KNOWN].includes(s);
+              return [
+                "done",
+                "learned",
+                "known",
+                WORD_STATUS.LEARNED,
+                WORD_STATUS.KNOWN,
+              ].includes(s);
             }).length;
             const pct = words.length
               ? Math.round((learned / words.length) * 100)
@@ -283,69 +386,92 @@ export default function LearnScreen({ navigation, route }) {
         )}
 
         {/* 2. Bugün oturum yapıldı ama tekrar yok → bekleme durumu */}
-        {sessionDoneToday && !hasReview && (
-          <View style={styles.waitCard}>
-            <Text style={styles.waitEmoji}>🧠</Text>
-            <Text style={styles.waitTitle}>Da Vinci sizi tekrar çağıracak</Text>
-            <Text style={styles.waitSub}>
-              {nextReviewIn && nextReviewIn.ms > 0
-                ? `${
-                    nextReviewIn.hours > 0 ? `${nextReviewIn.hours} saat ` : ""
-                  }${nextReviewIn.minutes} dakika sonra tekrar zamanı`
-                : "Bugünkü tekrarlar tamamlandı! Yarın yeni kelimeler gelecek."}
-            </Text>
-            <View style={styles.waitDots}>
-              {[0, 1, 2].map((i) => (
-                <View
-                  key={i}
-                  style={[styles.waitDot, { opacity: 0.3 + i * 0.35 }]}
-                />
-              ))}
+        {sessionDoneToday &&
+          !hasReview &&
+          !doneWordsReady &&
+          (() => {
+            // retry varsa ama zamanı gelmediyse "yarın" kartı göster
+            const retryNotReady = allWords.some((w) => {
+              const p = state.wordProgress[w.id];
+              return (
+                p?.status === "retry" &&
+                p.nextReviewAt &&
+                Date.now() < new Date(p.nextReviewAt).getTime()
+              );
+            });
+            return !hasRetryWords || retryNotReady;
+          })() && (
+            <View style={styles.waitCard}>
+              <Text style={styles.waitEmoji}>🧠</Text>
+              <Text style={styles.waitTitle}>
+                Da Vinci sizi tekrar çağıracak
+              </Text>
+              <Text style={styles.waitSub}>
+                {nextReviewIn && nextReviewIn.ms > 0
+                  ? `${
+                      nextReviewIn.hours > 0
+                        ? `${nextReviewIn.hours} saat `
+                        : ""
+                    }${nextReviewIn.minutes} dakika sonra tekrar zamanı`
+                  : "Bugünkü tekrarlar tamamlandı! Yarın yeni kelimeler gelecek."}
+              </Text>
+              <View style={styles.waitDots}>
+                {[0, 1, 2].map((i) => (
+                  <View
+                    key={i}
+                    style={[styles.waitDot, { opacity: 0.3 + i * 0.35 }]}
+                  />
+                ))}
+              </View>
             </View>
-          </View>
-        )}
+          )}
 
         {/* 3. Yeni oturum başlatılabilir */}
-        {!sessionDoneToday && hasNewWords && !lp.done && (
-          <View style={styles.actionArea}>
-            {/* Ana buton */}
-            <TouchableOpacity
-              style={styles.mainBtn}
-              onPress={handleStartSession}
-              activeOpacity={0.9}
-            >
-              <LinearGradient
-                colors={[color, color + "CC"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.mainBtnGrad}
+        {(hasNewWords || hasRetryWords || doneWordsReady) &&
+          !hasReview &&
+          (!sessionDoneToday || hasRetryWords || doneWordsReady) &&
+          !lp.done && (
+            <View style={styles.actionArea}>
+              {/* Ana buton */}
+              <TouchableOpacity
+                style={styles.mainBtn}
+                onPress={handleStartSession}
+                activeOpacity={0.9}
               >
-                <Ionicons name="play-circle" size={26} color="#fff" />
+                <LinearGradient
+                  colors={[color, color + "CC"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.mainBtnGrad}
+                >
+                  <Ionicons name="play-circle" size={26} color="#fff" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mainBtnTitle}>{btnLabel}</Text>
+                    <Text style={styles.mainBtnSub}>
+                      5 yeni kelime • Da Vinci metodu
+                    </Text>
+                  </View>
+                  <Ionicons name="arrow-forward" size={20} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
+
+              {/* Hızlı Tarama */}
+              <TouchableOpacity
+                style={[styles.scanBtn, { borderColor: color + "60" }]}
+                onPress={handleQuickScan}
+              >
+                <Ionicons name="flash" size={18} color={color} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.mainBtnTitle}>Öğrenmeye Başla</Text>
-                  <Text style={styles.mainBtnSub}>
-                    5 yeni kelime • Da Vinci metodu
+                  <Text style={[styles.scanTitle, { color }]}>
+                    Hızlı Tarama
+                  </Text>
+                  <Text style={styles.scanSub}>
+                    Hangilerini bildiğini işaretle
                   </Text>
                 </View>
-                <Ionicons name="arrow-forward" size={20} color="#fff" />
-              </LinearGradient>
-            </TouchableOpacity>
-
-            {/* Hızlı Tarama */}
-            <TouchableOpacity
-              style={[styles.scanBtn, { borderColor: color + "60" }]}
-              onPress={handleQuickScan}
-            >
-              <Ionicons name="flash" size={18} color={color} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.scanTitle, { color }]}>Hızlı Tarama</Text>
-                <Text style={styles.scanSub}>
-                  Hangilerini bildiğini işaretle
-                </Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-        )}
+              </TouchableOpacity>
+            </View>
+          )}
 
         {/* 4. Seviye tamamlandı */}
         {lp.done && (

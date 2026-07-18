@@ -1,6 +1,7 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { useEffect, useRef } from "react";
+import { INTERVAL } from "./davinciAlgorithm";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -14,134 +15,65 @@ if (Platform.OS === "android") {
   Notifications.setNotificationChannelAsync("default", {
     name: "Da Vinci Words",
     importance: Notifications.AndroidImportance.MAX,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: "#6C63FF",
     sound: true,
   });
 }
 
 export async function registerForPushNotifications() {
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  let finalStatus = existing;
-  if (existing !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-  return finalStatus;
+  const { status } = await Notifications.requestPermissionsAsync();
+  return status;
 }
 
 export async function cancelAllNotifications() {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
-const INTERVAL = 60 * 60 * 1000; // 1 saat
+// Tekrar bildirimi — reviewNum: 1, 2, 3
+export async function scheduleReview(reviewNum, wordCount) {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: `🔄 ${reviewNum}. Tekrar Zamanı!`,
+      body: `${wordCount} kelime seni bekliyor...`,
+      sound: true,
+      data: { reviewNum },
+    },
+    trigger: { type: "date", date: new Date(Date.now() + INTERVAL) },
+  });
+}
 
-// İlk öğrenmeden sonra — 3 tekrar bildirimi planla
-export async function scheduleReviewNotifications(wordCount = 5) {
+// Sonraki gün bildirimi
+export async function scheduleNextDay() {
+  const { NEXT_DAY } = require("./davinciAlgorithm");
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "☀️ Yeni Gün!",
+      body: "Bugün kelimelerini öğrenmeye devam et!",
+      sound: true,
+    },
+    trigger: { type: "date", date: new Date(Date.now() + NEXT_DAY) },
+  });
+}
+
+// Eski sistem uyumluluğu
+export async function scheduleReviewNotifications(count) {
   await cancelAllNotifications();
-  const now = new Date();
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "🔄 1. Tekrar Zamanı!",
-      body: `${wordCount} kelimeyi hatırlıyor musun?`,
-      sound: true,
-      data: { type: "review_1" },
-    },
-    trigger: { type: "date", date: new Date(now.getTime() + 1 * INTERVAL) },
-  });
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "🧠 2. Tekrar Zamanı!",
-      body: "Kelimeleri pekiştirme vakti!",
-      sound: true,
-      data: { type: "review_2" },
-    },
-    trigger: { type: "date", date: new Date(now.getTime() + 2 * INTERVAL) },
-  });
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "⭐ Son Tekrar!",
-      body: "Bugünün son tekrarı!",
-      sound: true,
-      data: { type: "review_3" },
-    },
-    trigger: { type: "date", date: new Date(now.getTime() + 3 * INTERVAL) },
-  });
+  await scheduleReview(1, count);
 }
-
-// 1. tekrar bittikten sonra — 2. ve 3. tekrar bildirimi
-export async function scheduleNextReviewNotification(reviewType) {
+export async function scheduleNextReviewNotification(type) {
   await cancelAllNotifications();
-  const now = new Date();
-
-  if (reviewType === "review_1") {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "🧠 2. Tekrar Zamanı!",
-        body: "Kelimeleri pekiştirme vakti!",
-        sound: true,
-        data: { type: "review_2" },
-      },
-      trigger: { type: "date", date: new Date(now.getTime() + 1 * INTERVAL) },
-    });
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "⭐ Son Tekrar!",
-        body: "Bugünün son tekrarı!",
-        sound: true,
-        data: { type: "review_3" },
-      },
-      trigger: { type: "date", date: new Date(now.getTime() + 2 * INTERVAL) },
-    });
-  } else if (reviewType === "review_2") {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "⭐ Son Tekrar!",
-        body: "Bugünün son tekrarı!",
-        sound: true,
-        data: { type: "review_3" },
-      },
-      trigger: { type: "date", date: new Date(now.getTime() + 1 * INTERVAL) },
-    });
-  } else if (reviewType === "review_3") {
-    // Son tekrar bitti — ertesi sabah yeni kelimeler
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0);
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "☀️ Günaydın! Yeni kelimeler seni bekliyor",
-        body: "Bugün 5 yeni kelime!",
-        sound: true,
-        data: { type: "new_day" },
-      },
-      trigger: { type: "date", date: tomorrow },
-    });
-  }
+  if (type === "r1") await scheduleReview(2, 5);
+  else if (type === "r2") await scheduleReview(3, 5);
+  else if (type === "r3") await scheduleNextDay();
 }
+export async function scheduleDailyReminder(h = 20, m = 0) {}
 
-// Günlük hatırlatma
-export async function scheduleDailyReminder(hour = 20, minute = 0) {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "🎯 Da Vinci seni bekliyor",
-      body: "Bugünkü 5 kelimeni öğrenmek için 5 dakikan var mı?",
-      sound: true,
-    },
-    trigger: { type: "daily", hour, minute },
-  });
-}
-
-export function useNotificationListener(onNotification) {
-  const l1 = useRef();
-  const l2 = useRef();
+export function useNotificationListener(cb) {
+  const l1 = useRef(),
+    l2 = useRef();
   useEffect(() => {
-    l1.current = Notifications.addNotificationReceivedListener((n) =>
-      onNotification?.(n)
-    );
+    l1.current = Notifications.addNotificationReceivedListener((n) => cb?.(n));
     l2.current = Notifications.addNotificationResponseReceivedListener((r) =>
-      onNotification?.(r.notification)
+      cb?.(r.notification)
     );
     return () => {
       Notifications.removeNotificationSubscription(l1.current);

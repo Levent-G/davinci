@@ -167,9 +167,11 @@ export default function StatsScreen({ navigation }) {
     };
   }, [stats]);
 
-  const totalLearned = Object.values(wordProgress).filter(
-    (p) => getMasteryLevel(p) >= 3
-  ).length;
+  const totalLearned = Object.values(wordProgress).filter((p) => {
+    const s = p?.status || "new";
+    // Yeni: done, known | Eski: learned, known
+    return ["done", "known", "learned"].includes(s) || getMasteryLevel(p) >= 3;
+  }).length;
   const completionPct =
     allWords.length > 0
       ? Math.round((totalLearned / allWords.length) * 100)
