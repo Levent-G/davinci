@@ -12,17 +12,29 @@ import {
   ActivityIndicator,
   Dimensions,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
-import { STATUS, quizOptions, afterLearning } from "../utils/davinciAlgorithm";
+import {
+  STATUS,
+  HOUR,
+  generateQuizOptions,
+  afterLearning,
+  alignToGroup,
+  getInFlightReviewCount,
+} from "../utils/davinciAlgorithm";
 import { useApp } from "../context/AppContext";
 import { speakWord } from "../utils/textToSpeech";
-import { signal } from "../utils/sessionBridge";
+import { markCompleted } from "../utils/sessionBridge";
+import { scheduleAllReviews } from "../utils/notifications";
 
 const { width } = Dimensions.get("window");
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
+// DÜZELTME: HOUR artık davinciAlgorithm.js'den import ediliyor.
+// Eskiden burada ayrı bir kopyası tanımlıydı; ikisi birbirinden bağımsız
+// değiştirilirse (örn. testten gerçek süreye geçerken sadece biri
+// güncellenirse) bildirim zamanları ile nextReviewAt zamanları
+// birbirinden sapardı.
 
 const STAGES = [
   { id: 0, name: "Merak", icon: "🔍", color: "#F5A623" },
@@ -33,15 +45,13 @@ const STAGES = [
 ];
 
 export default function LearningSessionScreen({ navigation, route }) {
-  const { words = [], level = "A1" } = route.params || {};
+  const { word, level = "A1" } = route.params || {};
   const { state, actions } = useApp();
   const allWords = actions.getAllWords();
 
-  const word = words[0]; // PreScan'dan tek kelime gelir
-
   const [stage, setStage] = useState(0);
   const [showMeaning, setShowMeaning] = useState(false);
-  const [userSentence, setUserSentence] = useState("");
+  const [sentence, setSentence] = useState("");
   const [sentenceOk, setSentenceOk] = useState(false);
   const [repeatCount, setRepeatCount] = useState(0);
   const [quizOpts, setQuizOpts] = useState([]);
@@ -51,13 +61,13 @@ export default function LearningSessionScreen({ navigation, route }) {
   const [aiScene, setAiScene] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const shakeAnim = useRef(new Animated.Value(0)).current;
   const stageRef = useRef(0);
+  const shakeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!word) return;
     if (stage === 1) loadImage(word.word);
-    if (stage === 4) setQuizOpts(quizOptions(word, allWords));
+    if (stage === 4) setQuizOpts(generateQuizOptions(word, allWords));
   }, [stage]);
 
   const loadImage = async (w) => {
@@ -78,7 +88,7 @@ export default function LearningSessionScreen({ navigation, route }) {
   };
 
   const loadAiScene = async () => {
-    if (aiScene || aiLoading) return;
+    if (aiScene || aiLoading || !word) return;
     setAiLoading(true);
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -110,18 +120,34 @@ export default function LearningSessionScreen({ navigation, route }) {
       setStage(cur + 1);
       return;
     }
-    // Aşama 5 (Test) bitti — kelimeyi kaydet
+    // Aşama 5 bitti — kelimeyi kaydet
     if (word) {
       const prog = state.wordProgress[word.id] || {};
-      const newProg = afterLearning({
+      let newProg = afterLearning({
         ...prog,
         startedAt: prog.startedAt || new Date().toISOString(),
       });
+      // DÜZELTME: Bu kelime, o an döngüde olan diğer kelimeler varsa
+      // (örn. dünden kalan ve bugün tekrar edilmiş kelimeler) onların
+      // ortak zamanına hizalanıyor — böylece "günlük 5" grubu tek bir
+      // zamanlamada ilerliyor, tekrarlar parça parça değil hep birlikte
+      // gelir.
+      newProg = alignToGroup(newProg, state.wordProgress, word.id);
+      let mergedProgress = state.wordProgress;
       try {
         await actions.updateWordProgress(word.id, newProg);
+        mergedProgress = { ...state.wordProgress, [word.id]: newProg };
+      } catch {}
+
+      // DÜZELTME: Bildirimde artık gerçek "döngüde olan kelime" sayısı
+      // gönderiliyor (eskiden hep sabit "1" gönderiliyordu). Bu hesap
+      // takvim tarihine değil, kelimelerin durumuna bakar.
+      try {
+        const pendingCount = getInFlightReviewCount(mergedProgress);
+        await scheduleAllReviews(pendingCount || 1, HOUR);
       } catch {}
     }
-    signal(); // PreScan'a bildir
+    markCompleted();
     navigation.goBack();
   }, [word, state.wordProgress]);
 
@@ -133,7 +159,7 @@ export default function LearningSessionScreen({ navigation, route }) {
   const handleQuizAnswer = (opt) => {
     if (quizAnswer) return;
     setQuizAnswer(opt);
-    if (!opt.correct) {
+    if (!opt.isCorrect) {
       Animated.sequence([
         Animated.timing(shakeAnim, {
           toValue: 10,
@@ -165,25 +191,40 @@ export default function LearningSessionScreen({ navigation, route }) {
     setTimeout(() => goNextRef.current(), 1300);
   };
 
-  const canGoNext =
+  const canNext =
     (stage === 0 && showMeaning) ||
     stage === 1 ||
     (stage === 2 && sentenceOk) ||
     (stage === 3 && repeatCount >= 3);
 
   const st = STAGES[stage];
-
   if (!word) return null;
 
   return (
     <SafeAreaView style={s.container}>
-      {/* Header */}
       <View style={s.header}>
         <TouchableOpacity
           onPress={() =>
-            Alert.alert("Çıkış", "Çıkmak istiyor musun?", [
+            Alert.alert("Çıkış", "Aşamadan çıkmak istediğine emin misin?", [
               { text: "İptal", style: "cancel" },
-              { text: "Çık", onPress: () => navigation.goBack() },
+              {
+                text: "Çık",
+                onPress: () => {
+                  // DÜZELTME: Kullanıcı 5-aşamalı öğrenmeden yarıda çıkarsa
+                  // kelime eskiden "learning" durumunda sonsuza kadar
+                  // takılı kalıyordu (getNewWords sadece "new"/tanımsız
+                  // durumdakileri getirir) — bir daha hiç karşısına
+                  // çıkmıyordu. Şimdi "new"e geri alınıyor, tekrar
+                  // öğrenme havuzuna dönüyor.
+                  if (word) {
+                    actions.updateWordProgress(word.id, {
+                      ...(state.wordProgress[word.id] || {}),
+                      status: STATUS.NEW,
+                    });
+                  }
+                  navigation.goBack();
+                },
+              },
             ])
           }
           style={s.closeBtn}
@@ -198,22 +239,16 @@ export default function LearningSessionScreen({ navigation, route }) {
                 s.pill,
                 {
                   width: i < stage ? 16 : i === stage ? 28 : 8,
-                  backgroundColor:
-                    i < stage
-                      ? st2.color + "80"
-                      : i === stage
-                      ? st2.color
-                      : COLORS.border,
+                  backgroundColor: i <= stage ? st2.color : COLORS.border,
                 },
               ]}
             />
           ))}
         </View>
-        <Text style={s.stageLabel}>{stage + 1}/5</Text>
+        <Text style={s.stageLbl}>{stage + 1}/5</Text>
       </View>
 
-      {/* Stage header */}
-      <View style={[s.stageHeader, { backgroundColor: st.color + "15" }]}>
+      <View style={[s.stageHdr, { backgroundColor: st.color + "15" }]}>
         <Text style={s.stageIcon}>{st.icon}</Text>
         <Text style={[s.stageName, { color: st.color }]}>
           Aşama {stage + 1} — {st.name}
@@ -224,10 +259,9 @@ export default function LearningSessionScreen({ navigation, route }) {
         contentContainerStyle={s.scroll}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Kelime kartı */}
         <View style={s.wordCard}>
           <View style={s.wordRow}>
-            <Text style={s.wordText}>{word.word}</Text>
+            <Text style={s.wordTxt}>{word.word}</Text>
             <TouchableOpacity
               onPress={() => speakWord(word.word)}
               style={s.speakBtn}
@@ -237,11 +271,11 @@ export default function LearningSessionScreen({ navigation, route }) {
           </View>
           {showMeaning && (
             <View style={s.meaningBox}>
-              <Text style={[s.meaningText, { color: st.color }]}>
+              <Text style={[s.meaningTxt, { color: st.color }]}>
                 {word.translation}
               </Text>
               {word.example ? (
-                <Text style={s.exampleText}>"{word.example}"</Text>
+                <Text style={s.exTxt}>"{word.example}"</Text>
               ) : null}
             </View>
           )}
@@ -252,11 +286,11 @@ export default function LearningSessionScreen({ navigation, route }) {
           <View style={s.content}>
             {word.example && (
               <View style={[s.exBox, { borderLeftColor: st.color }]}>
-                <Text style={[s.exLabel, { color: st.color }]}>
-                  📖 Örnek cümle:
-                </Text>
-                <Text style={s.exText}>{word.example}</Text>
-                {word.exampleTr && <Text style={s.exTr}>{word.exampleTr}</Text>}
+                <Text style={[s.exLabel, { color: st.color }]}>📖 Örnek:</Text>
+                <Text style={s.exBoxTxt}>{word.example}</Text>
+                {word.exampleTr && (
+                  <Text style={s.exBoxTr}>{word.exampleTr}</Text>
+                )}
               </View>
             )}
             {!showMeaning ? (
@@ -336,8 +370,8 @@ export default function LearningSessionScreen({ navigation, route }) {
         {/* AŞAMA 3 — YAZ */}
         {stage === 2 &&
           (() => {
-            const hasMin = userSentence.trim().length >= 3;
-            const hasWord = userSentence
+            const hasMin = sentence.trim().length >= 3;
+            const hasWord = sentence
               .toLowerCase()
               .includes(word.word.toLowerCase());
             return (
@@ -350,14 +384,14 @@ export default function LearningSessionScreen({ navigation, route }) {
                     s.input,
                     sentenceOk && { borderColor: COLORS.success },
                   ]}
-                  value={userSentence}
-                  onChangeText={setUserSentence}
+                  value={sentence}
+                  onChangeText={setSentence}
                   placeholder={`"${word.word}" kelimesini kullan...`}
                   placeholderTextColor={COLORS.textMuted}
                   multiline
                   editable={!sentenceOk}
                 />
-                {!sentenceOk && userSentence.length > 0 && (
+                {!sentenceOk && sentence.length > 0 && (
                   <View style={s.feedbackRow}>
                     {hasWord ? (
                       <>
@@ -488,44 +522,44 @@ export default function LearningSessionScreen({ navigation, route }) {
           <View style={s.content}>
             <Text style={s.quizQ}>Bu kelimenin anlamı nedir?</Text>
             <Animated.View
-              style={[s.options, { transform: [{ translateX: shakeAnim }] }]}
+              style={[s.opts, { transform: [{ translateX: shakeAnim }] }]}
             >
               {quizOpts.map((opt, i) => {
                 let bg = COLORS.backgroundCard,
                   border = COLORS.border,
-                  color2 = COLORS.textPrimary;
+                  col = COLORS.textPrimary;
                 if (quizAnswer) {
-                  if (opt.correct) {
+                  if (opt.isCorrect) {
                     bg = "rgba(100,220,150,0.15)";
                     border = COLORS.success;
-                    color2 = COLORS.success;
+                    col = COLORS.success;
                   } else if (quizAnswer === opt) {
                     bg = "rgba(255,100,100,0.15)";
                     border = COLORS.error;
-                    color2 = COLORS.error;
+                    col = COLORS.error;
                   }
                 }
                 return (
                   <TouchableOpacity
                     key={i}
                     style={[
-                      s.option,
+                      s.opt,
                       { backgroundColor: bg, borderColor: border },
                     ]}
                     onPress={() => handleQuizAnswer(opt)}
                     disabled={!!quizAnswer}
                   >
-                    <Text style={[s.optionTxt, { color: color2 }]}>
+                    <Text style={[s.optTxt, { color: col }]}>
                       {opt.word.translation}
                     </Text>
-                    {quizAnswer && opt.correct && (
+                    {quizAnswer && opt.isCorrect && (
                       <Ionicons
                         name="checkmark-circle"
                         size={20}
                         color={COLORS.success}
                       />
                     )}
-                    {quizAnswer === opt && !opt.correct && (
+                    {quizAnswer === opt && !opt.isCorrect && (
                       <Ionicons
                         name="close-circle"
                         size={20}
@@ -540,19 +574,18 @@ export default function LearningSessionScreen({ navigation, route }) {
         )}
       </ScrollView>
 
-      {/* Alt buton (Aşama 5 hariç) */}
       {stage !== 4 && (
         <View style={s.bottom}>
           <TouchableOpacity
             style={[
               s.nextBtn,
-              { backgroundColor: canGoNext ? st.color : COLORS.border },
+              { backgroundColor: canNext ? st.color : COLORS.border },
             ]}
-            onPress={() => canGoNext && goNextRef.current()}
-            disabled={!canGoNext}
+            onPress={() => canNext && goNextRef.current()}
+            disabled={!canNext}
           >
             <Text
-              style={[s.nextBtnTxt, !canGoNext && { color: COLORS.textMuted }]}
+              style={[s.nextBtnTxt, !canNext && { color: COLORS.textMuted }]}
             >
               {stage === 0 && !showMeaning
                 ? "Önce Anlamı Gör"
@@ -590,12 +623,12 @@ const s = StyleSheet.create({
   },
   pills: { flexDirection: "row", gap: 5, alignItems: "center" },
   pill: { height: 6, borderRadius: 3 },
-  stageLabel: {
+  stageLbl: {
     color: COLORS.textMuted,
     fontSize: FONT_SIZES.sm,
     fontWeight: "600",
   },
-  stageHeader: {
+  stageHdr: {
     flexDirection: "row",
     alignItems: "center",
     gap: SPACING.sm,
@@ -624,7 +657,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     gap: SPACING.md,
   },
-  wordText: {
+  wordTxt: {
     fontSize: 42,
     fontWeight: "900",
     color: COLORS.textPrimary,
@@ -646,8 +679,8 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
-  meaningText: { fontSize: FONT_SIZES.xxl, fontWeight: "800" },
-  exampleText: {
+  meaningTxt: { fontSize: FONT_SIZES.xxl, fontWeight: "800" },
+  exTxt: {
     color: COLORS.textSecondary,
     fontSize: FONT_SIZES.sm,
     fontStyle: "italic",
@@ -662,12 +695,12 @@ const s = StyleSheet.create({
     borderLeftWidth: 3,
   },
   exLabel: { fontSize: FONT_SIZES.xs, fontWeight: "700" },
-  exText: {
+  exBoxTxt: {
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.sm,
     fontStyle: "italic",
   },
-  exTr: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
+  exBoxTr: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
   revealBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -687,7 +720,7 @@ const s = StyleSheet.create({
   },
   revealedMeaning: { fontSize: FONT_SIZES.xxl + 4, fontWeight: "900" },
   revealedHint: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-  image: { width: "100%", height: 330, borderRadius: RADIUS.xl },
+  image: { width: "100%", height: 200, borderRadius: RADIUS.xl },
   imgPH: {
     height: 140,
     backgroundColor: COLORS.backgroundCard,
@@ -795,8 +828,8 @@ const s = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
-  options: { gap: SPACING.sm },
-  option: {
+  opts: { gap: SPACING.sm },
+  opt: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -804,7 +837,7 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.lg,
     padding: SPACING.md + 2,
   },
-  optionTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
+  optTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
   bottom: {
     position: "absolute",
     bottom: 0,

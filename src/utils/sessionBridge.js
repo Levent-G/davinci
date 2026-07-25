@@ -1,10 +1,14 @@
-// Ekranlar arası sinyal
-let _signal = false;
-export const signal = () => {
-  _signal = true;
+let _completed = false;
+export const markCompleted = () => {
+  _completed = true;
 };
-export const consume = () => {
-  const v = _signal;
-  _signal = false;
+export const wasCompleted = () => {
+  const v = _completed;
+  _completed = false;
   return v;
 };
+// Eski uyumlu
+export const signal = markCompleted;
+export const consume = wasCompleted;
+export const setWordCompleted = markCompleted;
+export const consumeWordCompleted = wasCompleted;

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -13,14 +13,26 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
-import { quizOptions, afterQuiz, STATUS } from "../utils/davinciAlgorithm";
+import {
+  generateQuizOptions,
+  afterQuiz,
+  STATUS,
+  HOUR,
+  alignToGroup,
+  getInFlightReviewCount,
+} from "../utils/davinciAlgorithm";
 import { speakWord } from "../utils/textToSpeech";
-import { scheduleNextReviewNotification } from "../utils/notifications";
+import {
+  cancelAllNotifications,
+  scheduleReviewNotification,
+} from "../utils/notifications";
 
 const { width } = Dimensions.get("window");
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
+// DÜZELTME: HOUR artık tek kaynaktan (davinciAlgorithm.js) geliyor.
 
 export default function ReviewScreen({ navigation, route }) {
   const { words = [], reviewType = "r1" } = route.params || {};
@@ -34,16 +46,25 @@ export default function ReviewScreen({ navigation, route }) {
   const [imgLoading, setImgLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [results, setResults] = useState([]);
+  // Her cevaptan sonra güncel progress'i burada da tutuyoruz çünkü
+  // state.wordProgress'in re-render ile senkron gelmesini beklemeden
+  // "done" ekranındaki mesajı ve bildirim sayısını doğru hesaplamak
+  // istiyoruz.
+  const latestProgressRef = useRef(state.wordProgress);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const currentWord = words[idx] || null;
+  const word = words[idx] || null;
 
   useEffect(() => {
-    if (!currentWord) return;
+    latestProgressRef.current = state.wordProgress;
+  }, [state.wordProgress]);
+
+  useEffect(() => {
+    if (!word) return;
     setQuizAnswer(null);
-    setQuizOpts(quizOptions(currentWord, allWords));
-    loadImage(currentWord.word);
+    setQuizOpts(generateQuizOptions(word, allWords));
+    loadImage(word.word);
     Animated.sequence([
       Animated.timing(fadeAnim, {
         toValue: 0,
@@ -58,8 +79,40 @@ export default function ReviewScreen({ navigation, route }) {
     ]).start();
   }, [idx]);
 
+  // Bildirim — done olunca 1 kez
+  // DÜZELTME: Eskiden `p?.reviewCount` diye var olmayan bir alana
+  // bakılıyordu (asıl alan `reviewsDone`), bu yüzden ortalama her zaman 0
+  // çıkıyor ve bildirim hep "1. Tekrar Zamanı!" yazıyordu — kaçıncı tur
+  // olduğuna bakılmaksızın. Ayrıca eski bildirimler iptal edilmeden yeni
+  // bildirim ekleniyordu. Şimdi:
+  //  - sadece hâlâ döngüde olan (dayDone olmamış) kelimeler için
+  //    bir sonraki tur bildirimi planlanıyor,
+  //  - eğer tüm kelimeler bugün tamamlandıysa (öğrenildi ya da yarına
+  //    ertelendi) hiç HOUR-sonrası bildirimi planlanmıyor.
   useEffect(() => {
-    if (done) scheduleNextReviewNotification(reviewType).catch(() => {});
+    if (!done || !results.length) return;
+    (async () => {
+      try {
+        await cancelAllNotifications();
+        const progress = latestProgressRef.current;
+        const pendingCount = getInFlightReviewCount(progress);
+        if (pendingCount <= 0) return; // döngü tamamen bitti (yarına ertelendi ya da öğrenildi)
+
+        const reviewsDoneVals = results
+          .map((r) => progress[r.word.id]?.reviewsDone)
+          .filter(
+            (v) => typeof v === "number" && !progress[r.word.id]?.dayDone
+          );
+        const nextRound =
+          (reviewsDoneVals.length ? Math.min(...reviewsDoneVals) : 0) + 1;
+
+        await scheduleReviewNotification(
+          pendingCount,
+          Math.min(nextRound, 3),
+          HOUR
+        );
+      } catch {}
+    })();
   }, [done]);
 
   const loadImage = async (w) => {
@@ -81,10 +134,10 @@ export default function ReviewScreen({ navigation, route }) {
   };
 
   const handleAnswer = async (opt) => {
-    if (quizAnswer) return;
+    if (quizAnswer || !word) return;
     setQuizAnswer(opt);
 
-    if (!opt.correct) {
+    if (!opt.isCorrect) {
       Animated.sequence([
         Animated.timing(shakeAnim, {
           toValue: 10,
@@ -114,17 +167,26 @@ export default function ReviewScreen({ navigation, route }) {
       ]).start();
     }
 
-    // Progress güncelle
-    const prog = state.wordProgress[currentWord.id] || {};
-    const newProg = afterQuiz(prog, opt.correct);
+    const prog = state.wordProgress[word.id] || {};
+    let newProg = afterQuiz(prog, opt.isCorrect);
+    // DÜZELTME: Bu kelime, döngüde kalmaya devam ediyorsa (henüz 3 turu
+    // bitmediyse), grupta başka bekleyen kelimeler varsa onların ortak
+    // zamanına hizalanıyor. Böylece aynı gün içindeki tüm kelimeler
+    // (eski+yeni karışık olsa bile) tek bir ortak tekrar zamanlamasında
+    // buluşuyor, "1 kelime geldi, biraz sonra 3 kelime daha geldi" gibi
+    // parça parça tekrar akışı ortadan kalkıyor.
+    newProg = alignToGroup(newProg, state.wordProgress, word.id);
     try {
-      await actions.updateWordProgress(currentWord.id, { ...prog, ...newProg });
+      await actions.updateWordProgress(word.id, newProg);
+      // Yerel referansı hemen güncelle — sonraki hesaplamalar
+      // (done ekranı / bildirim) state re-render'ını beklemesin.
+      latestProgressRef.current = {
+        ...latestProgressRef.current,
+        [word.id]: newProg,
+      };
     } catch {}
 
-    const newResults = [
-      ...results,
-      { word: currentWord, correct: opt.correct },
-    ];
+    const newResults = [...results, { word, correct: opt.isCorrect }];
     setResults(newResults);
 
     setTimeout(() => {
@@ -134,12 +196,41 @@ export default function ReviewScreen({ navigation, route }) {
     }, 1500);
   };
 
-  // DONE ekranı
+  // Done ekranı
   if (done) {
     const correct = results.filter((r) => r.correct).length;
-    const score =
-      words.length > 0 ? Math.round((correct / words.length) * 100) : 0;
-    const isLast = reviewType === "r3";
+    const score = words.length ? Math.round((correct / words.length) * 100) : 0;
+    const progress = latestProgressRef.current;
+
+    const allLearned = results.every(
+      (r) => progress[r.word.id]?.status === STATUS.LEARNED
+    );
+    // DÜZELTME: "Da Vinci sizi 1 saat sonra tekrar çağıracak" mesajı
+    // artık sadece gerçekten bugün tekrara devam edecek kelime varsa
+    // gösteriliyor. 3 kez yanlış yapılıp yarına ertelenen kelimeler için
+    // ayrı ve doğru bir mesaj var.
+    const stillPendingToday = results.some((r) => {
+      const p = progress[r.word.id];
+      return p?.status === STATUS.REVIEW && !p?.dayDone;
+    });
+    const deferredToTomorrow = results.some((r) => {
+      const p = progress[r.word.id];
+      return p?.status === STATUS.REVIEW && p?.dayDone;
+    });
+
+    let callMessage;
+    if (allLearned) {
+      callMessage = "Tebrikler! Tüm kelimeler öğrenildi! 🎉";
+    } else if (stillPendingToday) {
+      callMessage =
+        "Da Vinci sizi tekrar çağıracak\n1 saat sonra tekrar zamanı!";
+    } else if (deferredToTomorrow) {
+      callMessage =
+        "Bazı kelimeler yarın tekrar karşına çıkacak.\nYarın devam edebilirsin.";
+    } else {
+      callMessage = "Tekrar tamamlandı!";
+    }
+
     return (
       <SafeAreaView style={s.container}>
         <View style={s.doneBox}>
@@ -156,56 +247,29 @@ export default function ReviewScreen({ navigation, route }) {
               <Text style={[s.doneStatNum, { color: COLORS.success }]}>
                 {correct}
               </Text>
-              <Text style={s.doneStatLabel}>Doğru</Text>
+              <Text style={s.doneStatLbl}>Doğru</Text>
             </View>
             <View style={s.doneStatDiv} />
             <View style={s.doneStat}>
               <Text style={[s.doneStatNum, { color: COLORS.error }]}>
                 {words.length - correct}
               </Text>
-              <Text style={s.doneStatLabel}>Yanlış</Text>
+              <Text style={s.doneStatLbl}>Yanlış</Text>
             </View>
           </View>
           <View style={s.callBox}>
             <Text style={s.callEmoji}>🧠</Text>
-            <Text style={s.callTxt}>
-              Da Vinci sizi tekrar çağıracak{"\n"}
-              {isLast
-                ? score >= 60
-                  ? "Yarın yeni kelimeler gelecek!"
-                  : "Eksik kelimeler yarın tekrar gelecek."
-                : "1 dakika sonra tekrar zamanı!"}
-            </Text>
+            <Text style={s.callTxt}>{callMessage}</Text>
           </View>
           <TouchableOpacity
             style={s.doneBtn}
-            onPress={() => {
-              const level = words[0]?.level || "A1";
-              if (reviewType === "r1" && route.params?.fromRetry) {
-                const retryCount = words.length;
-                const SESSION_TARGET = 5;
-                if (retryCount < SESSION_TARGET) {
-                  // Kalan kelimeler için PreScan'a geç
-                  navigation.navigate("PreScan", {
-                    level,
-                    sessionCount: retryCount,
-                  });
-                } else {
-                  // 5 RETRY — PreScan yok, direkt Learn'e dön
-                  navigation.navigate("MainTabs", { screen: "Learn" });
-                }
-              } else if (isLast) {
-                navigation.navigate("MainTabs", { screen: "Learn" });
-              } else {
-                navigation.goBack();
-              }
-            }}
+            onPress={() => navigation.navigate("MainTabs", { screen: "Learn" })}
           >
             <LinearGradient
               colors={[COLORS.accent, COLORS.accent + "CC"]}
               style={s.doneBtnGrad}
             >
-              <Text style={s.doneBtnTxt}>Tamam →</Text>
+              <Text style={s.doneBtnTxt}>Ana Sayfaya Dön →</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
@@ -213,11 +277,10 @@ export default function ReviewScreen({ navigation, route }) {
     );
   }
 
-  if (!currentWord) return null;
+  if (!word) return null;
 
   return (
     <SafeAreaView style={s.container}>
-      {/* Header */}
       <View style={s.header}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -242,7 +305,12 @@ export default function ReviewScreen({ navigation, route }) {
 
       <View style={s.progressBg}>
         <View
-          style={[s.progressFill, { width: `${(idx / words.length) * 100}%` }]}
+          style={[
+            s.progressFill,
+            {
+              width: `${((idx + (quizAnswer ? 1 : 0)) / words.length) * 100}%`,
+            },
+          ]}
         />
       </View>
 
@@ -251,7 +319,6 @@ export default function ReviewScreen({ navigation, route }) {
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
       >
-        {/* Büyük fotoğraf */}
         <View style={s.imgBox}>
           {imageUri ? (
             <Image
@@ -274,66 +341,63 @@ export default function ReviewScreen({ navigation, route }) {
           )}
         </View>
 
-        {/* Kelime kartı */}
         <View style={s.wordCard}>
-          <Text style={s.wordText}>{currentWord.word}</Text>
-          <Text style={s.wordPos}>{currentWord.partOfSpeech}</Text>
+          <Text style={s.wordTxt}>{word.word}</Text>
+          {word.partOfSpeech && (
+            <Text style={s.wordPos}>{word.partOfSpeech}</Text>
+          )}
           {/* Türkçe anlam quiz sırasında gizli */}
           <TouchableOpacity
             style={s.speakBtn}
-            onPress={() => speakWord(currentWord.word)}
+            onPress={() => speakWord(word.word)}
           >
             <Ionicons
               name="volume-high-outline"
-              size={12}
+              size={22}
               color={COLORS.accent}
             />
             <Text style={s.speakTxt}>Sesli Dinle</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Quiz */}
         <View style={s.quizBox}>
           <Text style={s.quizQ}>Bu kelimenin Türkçe anlamı nedir?</Text>
           <Animated.View
-            style={[s.options, { transform: [{ translateX: shakeAnim }] }]}
+            style={[s.opts, { transform: [{ translateX: shakeAnim }] }]}
           >
             {quizOpts.map((opt, i) => {
               let bg = COLORS.backgroundCard,
                 border = COLORS.border,
-                color = COLORS.textPrimary;
+                col = COLORS.textPrimary;
               if (quizAnswer) {
-                if (opt.correct) {
+                if (opt.isCorrect) {
                   bg = "rgba(100,220,150,0.15)";
                   border = COLORS.success;
-                  color = COLORS.success;
+                  col = COLORS.success;
                 } else if (quizAnswer === opt) {
                   bg = "rgba(255,100,100,0.15)";
                   border = COLORS.error;
-                  color = COLORS.error;
+                  col = COLORS.error;
                 }
               }
               return (
                 <TouchableOpacity
                   key={i}
-                  style={[
-                    s.option,
-                    { backgroundColor: bg, borderColor: border },
-                  ]}
+                  style={[s.opt, { backgroundColor: bg, borderColor: border }]}
                   onPress={() => handleAnswer(opt)}
                   disabled={!!quizAnswer}
                 >
-                  <Text style={[s.optionTxt, { color }]}>
+                  <Text style={[s.optTxt, { color: col }]}>
                     {opt.word.translation}
                   </Text>
-                  {quizAnswer && opt.correct && (
+                  {quizAnswer && opt.isCorrect && (
                     <Ionicons
                       name="checkmark-circle"
                       size={20}
                       color={COLORS.success}
                     />
                   )}
-                  {quizAnswer === opt && !opt.correct && (
+                  {quizAnswer === opt && !opt.isCorrect && (
                     <Ionicons
                       name="close-circle"
                       size={20}
@@ -349,10 +413,10 @@ export default function ReviewScreen({ navigation, route }) {
               style={[
                 s.feedback,
                 {
-                  borderColor: quizAnswer.correct
+                  borderColor: quizAnswer.isCorrect
                     ? COLORS.success
                     : COLORS.error,
-                  backgroundColor: quizAnswer.correct
+                  backgroundColor: quizAnswer.isCorrect
                     ? "rgba(100,220,150,0.1)"
                     : "rgba(255,100,100,0.1)",
                 },
@@ -361,12 +425,14 @@ export default function ReviewScreen({ navigation, route }) {
               <Text
                 style={[
                   s.feedbackTxt,
-                  { color: quizAnswer.correct ? COLORS.success : COLORS.error },
+                  {
+                    color: quizAnswer.isCorrect ? COLORS.success : COLORS.error,
+                  },
                 ]}
               >
-                {quizAnswer.correct
+                {quizAnswer.isCorrect
                   ? "✅ Doğru!"
-                  : `❌ Doğrusu: ${currentWord.translation}`}
+                  : `❌ Doğrusu: ${word.translation}`}
               </Text>
             </View>
           )}
@@ -407,9 +473,9 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.xl,
     overflow: "hidden",
   },
-  image: { width: "100%", height: 300 },
+  image: { width: "100%", height: 220 },
   imgPH: {
-    height: 100,
+    height: 160,
     backgroundColor: COLORS.backgroundCard,
     alignItems: "center",
     justifyContent: "center",
@@ -427,8 +493,8 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  wordText: {
-    fontSize: 24,
+  wordTxt: {
+    fontSize: 44,
     fontWeight: "900",
     color: COLORS.textPrimary,
     letterSpacing: -1,
@@ -437,11 +503,6 @@ const s = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONT_SIZES.xs,
     fontStyle: "italic",
-  },
-  wordTranslation: {
-    fontSize: FONT_SIZES.xxl,
-    fontWeight: "700",
-    color: COLORS.accent,
   },
   speakBtn: {
     flexDirection: "row",
@@ -464,8 +525,8 @@ const s = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
-  options: { gap: SPACING.sm },
-  option: {
+  opts: { gap: SPACING.sm },
+  opt: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -473,7 +534,7 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.lg,
     padding: SPACING.md + 2,
   },
-  optionTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
+  optTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
   feedback: { borderWidth: 1.5, borderRadius: RADIUS.lg, padding: SPACING.md },
   feedbackTxt: { fontWeight: "600", fontSize: FONT_SIZES.sm },
   doneBox: {
@@ -511,7 +572,7 @@ const s = StyleSheet.create({
   doneStat: { alignItems: "center", paddingHorizontal: SPACING.xl, gap: 4 },
   doneStatDiv: { width: 1, height: 40, backgroundColor: COLORS.border },
   doneStatNum: { fontSize: FONT_SIZES.xxl, fontWeight: "800" },
-  doneStatLabel: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
+  doneStatLbl: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
   callBox: {
     flexDirection: "row",
     alignItems: "center",

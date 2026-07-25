@@ -84,7 +84,7 @@ export default function HomeScreen({ navigation }) {
               return p && isDueForReview(p);
             })
             .slice(0, 5);
-          navigation.navigate("LearningSession", { words, mode: "review" });
+          navigation.navigate("Review", { words, reviewType: "r1" });
         },
       };
     }
@@ -295,10 +295,7 @@ export default function HomeScreen({ navigation }) {
                         return p && isDueForReview(p);
                       })
                       .slice(0, 5);
-                    navigation.navigate("LearningSession", {
-                      words,
-                      mode: "review",
-                    });
+                    navigation.navigate("Review", { words, reviewType: "r1" });
                   }
                 : null
             }

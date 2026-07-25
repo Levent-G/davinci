@@ -1,7 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { useEffect, useRef } from "react";
-import { INTERVAL } from "./davinciAlgorithm";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -16,6 +15,7 @@ if (Platform.OS === "android") {
   Notifications.setNotificationChannelAsync("default", {
     name: "Da Vinci Words",
     importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
     sound: true,
   });
 }
@@ -29,44 +29,53 @@ export async function cancelAllNotifications() {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
-// Tekrar bildirimi — reviewNum: 1, 2, 3
-export async function scheduleReview(reviewNum, wordCount) {
+// Tekrar bildirimi — HOUR ms sonra
+export async function scheduleReviewNotification(
+  wordCount,
+  reviewNum,
+  delayMs
+) {
   await Notifications.scheduleNotificationAsync({
     content: {
       title: `🔄 ${reviewNum}. Tekrar Zamanı!`,
-      body: `${wordCount} kelime seni bekliyor...`,
+      body: `${wordCount} kelimeyi hatırlıyor musun?`,
       sound: true,
       data: { reviewNum },
     },
-    trigger: { type: "date", date: new Date(Date.now() + INTERVAL) },
+    trigger: { type: "date", date: new Date(Date.now() + delayMs) },
   });
 }
 
-// Sonraki gün bildirimi
-export async function scheduleNextDay() {
-  const { NEXT_DAY } = require("./davinciAlgorithm");
+// İlk öğrenmeden sonra 3 tekrar planla
+export async function scheduleAllReviews(wordCount, hourMs) {
+  await cancelAllNotifications();
+  for (let i = 1; i <= 3; i++) {
+    await scheduleReviewNotification(wordCount, i, hourMs * i);
+  }
+}
+
+// Sonraki tekrar bildirimi
+export async function scheduleNextReview(wordCount, reviewCount, hourMs) {
+  if (reviewCount >= 3) return; // 3 tekrar tamam
+  await scheduleReviewNotification(wordCount, reviewCount + 1, hourMs);
+}
+
+// Günlük hatırlatma
+export async function scheduleDailyReminder(hour = 20, minute = 0) {
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "☀️ Yeni Gün!",
-      body: "Bugün kelimelerini öğrenmeye devam et!",
+      title: "🎯 Da Vinci seni bekliyor",
+      body: "Bugünkü 5 kelimeni öğrenmek için 5 dakikan var mı?",
       sound: true,
     },
-    trigger: { type: "date", date: new Date(Date.now() + NEXT_DAY) },
+    trigger: { type: "daily", hour, minute },
   });
 }
 
-// Eski sistem uyumluluğu
-export async function scheduleReviewNotifications(count) {
-  await cancelAllNotifications();
-  await scheduleReview(1, count);
-}
-export async function scheduleNextReviewNotification(type) {
-  await cancelAllNotifications();
-  if (type === "r1") await scheduleReview(2, 5);
-  else if (type === "r2") await scheduleReview(3, 5);
-  else if (type === "r3") await scheduleNextDay();
-}
-export async function scheduleDailyReminder(h = 20, m = 0) {}
+// Eski uyumlu
+export const scheduleReviewNotifications = (count) =>
+  scheduleAllReviews(count, 60 * 60 * 1000);
+export const scheduleNextReviewNotification = () => {};
 
 export function useNotificationListener(cb) {
   const l1 = useRef(),

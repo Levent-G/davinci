@@ -1,6 +1,4 @@
-// src/screens/LearnScreen.jsx — sade versiyon
-import React, { useMemo, useCallback, useState } from "react";
-import { useFocusEffect } from "@react-navigation/native";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,21 +9,19 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import {
-  getDailyWords,
-  getTodayReviewWords,
-  hasDoneSessionToday,
+  STATUS,
+  DAILY_TARGET,
+  getReviewWords,
+  getNewWords,
   getNextReviewIn,
   getDailyStats,
-  WORD_STATUS,
-  getWordStatus,
-  isToday,
+  getWaitingReviewCount,
+  getRestingCount,
   getReviewType,
-  STATUS,
-  getReviewWords,
-  getReviewType as getRT,
 } from "../utils/davinciAlgorithm";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -38,251 +34,154 @@ const LEVEL_COLORS = {
   C2: "#E17055",
 };
 
-export default function LearnScreen({ navigation, route }) {
+export default function LearnScreen({ navigation }) {
   const { state, actions } = useApp();
-  const prefLevel =
-    route.params?.level ||
-    state.settings?.preferredLevel ||
-    state.user?.settings?.preferredLevel ||
-    "A1";
-
-  const [selectedLevel, setSelectedLevel] = React.useState(prefLevel);
-
-  // Uygulama focus aldığında (arka plandan gelince) state'i yenile
+  const [selectedLevel, setSelectedLevel] = useState("A1");
   const [tick, setTick] = useState(0);
+
   useFocusEffect(
     useCallback(() => {
-      setTick((t) => t + 1); // re-render tetikle — isDue kontrolü güncellensin
+      setTick((t) => t + 1);
+      const iv = setInterval(() => setTick((t) => t + 1), 10000);
+      return () => clearInterval(iv);
     }, [])
   );
 
   const allWords = actions.getAllWords();
-  const dailyStats = getDailyStats(allWords, state.wordProgress);
+  const wp = state.wordProgress;
 
-  // Seçili seviye ilerleme
-  const levelProgress = useMemo(() => {
-    const words = allWords.filter((w) => w.level === selectedLevel);
-    if (!words.length) return { pct: 0, learned: 0, total: 0 };
-    const learned = words.filter((w) => {
-      const p = state.wordProgress[w.id];
-      if (!p) return false;
-      const s = p.status || getWordStatus(p);
-      return [
-        "done",
-        "learned",
-        "known",
-        WORD_STATUS.LEARNED,
-        WORD_STATUS.KNOWN,
-      ].includes(s);
-    }).length;
-    return {
-      pct: Math.round((learned / words.length) * 100),
-      learned,
-      total: words.length,
-    };
-  }, [allWords, state.wordProgress, selectedLevel]);
-
-  // Bugün oturum yapıldı mı?
-  // Bugün kaç kelime REVIEW_1 veya üstüne geçti (aşamalar tamamlandı)
-  // Bugün kaç kelime öğrenme aşamasına girdi
-  const SESSION_TARGET = 5;
-  const todayLearnedCount = allWords.filter((w) => {
-    const p = state.wordProgress[w.id];
-    if (!p) return false;
-    const s = p.status || "new";
-    if (!["r1", "r2", "r3", "done", "retry"].includes(s)) return false;
-    return p.startedAt && isToday(p.startedAt);
-  }).length;
-
-  // Bugün done olan kelimeler NEXT_DAY geçti mi? Geçtiyse yeni kelimeler açılır
-  const doneWordsReady = allWords.some((w) => {
-    const p = state.wordProgress[w.id];
-    if (!p || p.status !== "done") return false;
-    return p.nextReviewAt && Date.now() >= new Date(p.nextReviewAt).getTime();
-  });
-  const sessionDoneToday = todayLearnedCount >= SESSION_TARGET;
-  const reviewWords = React.useMemo(() => {
-    try {
-      return getReviewWords(allWords, state.wordProgress);
-    } catch {
-      return [];
-    }
-  }, [tick, state.wordProgress]);
-  const hasReview = reviewWords.length > 0;
-
-  // Kaç saat sonra tekrar?
-  const nextReviewIn = getNextReviewIn(state.wordProgress);
-
-  // Yeni kelimeler
+  const reviewWords = useMemo(() => getReviewWords(allWords, wp), [wp, tick]);
   const newWords = useMemo(
-    () => getDailyWords(allWords, state.wordProgress, selectedLevel, 5),
-    [
-      selectedLevel,
-      allWords.length,
-      Object.keys(state.wordProgress).length,
-      tick,
-    ]
+    () => getNewWords(allWords, wp, selectedLevel, 5),
+    [wp, selectedLevel, tick]
   );
-  const hasNewWords = newWords.length > 0;
+  const nextReviewIn = useMemo(() => getNextReviewIn(wp), [wp, tick]);
+  const stats = useMemo(() => getDailyStats(allWords, wp), [wp]);
 
-  // Daha önce başlanmış (FAILED) kelime var mı
-  const hasRetryWords = React.useMemo(() => {
-    return allWords.some((w) => {
-      const p = state.wordProgress[w.id];
-      if (!p) return false;
-      if (!["retry", "failed"].includes(p.status)) return false;
-      if (w.level !== selectedLevel) return false;
-      return (
-        !p.nextReviewAt || Date.now() >= new Date(p.nextReviewAt).getTime()
-      );
-    });
-  }, [tick, state.wordProgress, selectedLevel]);
-  const hasFailedWords = hasRetryWords;
-  const btnLabel = hasFailedWords
-    ? "Öğrenmeye Devam Et →"
-    : "Öğrenmeye Başla →";
+  // DÜZELTME (KRİTİK): Artık hiçbir yerde gerçek takvim tarihine (isToday)
+  // bakılmıyor. Bunun yerine üç ayrı, tarihsiz durum takip ediliyor:
+  //  - hasReview: şu an tekrar zamanı gelmiş kelime var mı
+  //  - waitingCount: 3 turluk döngüde olup henüz sırası gelmemiş kelime
+  //    (bir sonraki tur bekleniyor — "Da Vinci çağıracak" burada gösterilir)
+  //  - restingCount: döngüsü tamamen bitmiş (öğrenildi ya da yarına
+  //    ertelendi) ve şu an dinlenen kelime
+  // Eskiden takvim tarihi kullanıldığı için, test sabitleriyle (1-2 dk)
+  // hızlı test yaparken Gün 1 ve Gün 2 aynı gerçek gün içinde kaldığından
+  // Gün 1'in tamamlanmış 5 kelimesi Gün 2'de de "bugün" sayılıyor ve daha
+  // 1. tekrar bile yapılmadan "Yarın seni bekliyorum" tetikleniyordu.
+  const waitingCount = useMemo(() => getWaitingReviewCount(wp), [wp, tick]);
+  const restingCount = useMemo(() => getRestingCount(wp), [wp, tick]);
+  const batchInPlay = Math.min(
+    reviewWords.length + waitingCount + restingCount,
+    DAILY_TARGET
+  );
+  const remainingToday = Math.max(DAILY_TARGET - batchInPlay, 0);
 
-  // ReviewType belirle
-  const getReviewType = () => {
-    const types = reviewWords.map((w) => state.wordProgress[w.id]?.status);
-    if (types.includes(WORD_STATUS.REVIEW_1)) return "review_1";
-    if (types.includes(WORD_STATUS.REVIEW_2)) return "review_2";
-    return "review_3";
-  };
+  // Daha önce başlanmış mı (öğreniyor veya öğrendi)
+  const hasStarted = useMemo(
+    () =>
+      Object.values(wp).some((p) =>
+        [STATUS.REVIEW, STATUS.LEARNED, STATUS.LEARNING].includes(p?.status)
+      ),
+    [wp]
+  );
 
-  const handleStartSession = () => {
-    if (!newWords.length) return;
+  const color = LEVEL_COLORS[selectedLevel] || COLORS.accent;
+  const hasReview = reviewWords.length > 0;
+  const hasNew = newWords.length > 0;
 
-    // retry kelimeler varsa direkt ReviewScreen'e git
-    if (hasRetryWords) {
-      const retryWords = allWords.filter((w) => {
-        if (w.level !== selectedLevel) return false;
-        const p = state.wordProgress[w.id];
-        return p?.status === "retry" || p?.status === "failed";
-      });
-      if (retryWords.length > 0) {
-        navigation.navigate("Review", {
-          words: retryWords,
-          reviewType: "r1",
-          fromRetry: true,
-          level: selectedLevel,
-        });
-        return;
-      }
-    }
+  const levelProgress = useMemo(() => {
+    const lvlWords = allWords.filter((w) => w.level === selectedLevel);
+    if (!lvlWords.length) return { pct: 0, learned: 0, total: 0 };
+    const learned = lvlWords.filter((w) =>
+      [STATUS.LEARNED, STATUS.KNOWN].includes(wp[w.id]?.status)
+    ).length;
+    return {
+      pct: Math.round((learned / lvlWords.length) * 100),
+      learned,
+      total: lvlWords.length,
+    };
+  }, [wp, selectedLevel]);
 
-    // Yeni kelimeler — PreScan (biliyorum/bilmiyorum)
-    const onlyNew = newWords.filter((w) => {
-      const s = state.wordProgress[w.id]?.status;
-      return !s || s === "new";
-    });
-    navigation.navigate("PreScan", {
-      words: onlyNew.length ? onlyNew : newWords,
-      level: selectedLevel,
-    });
-  };
-
-  const handleStartReview = () => {
-    const { getReviewType: grt } = require("../utils/davinciAlgorithm");
-    const rType = grt(reviewWords, state.wordProgress);
-    navigation.navigate("Review", { words: reviewWords, reviewType: rType });
-  };
-
-  const handleQuickScan = () => {
-    const candidates = allWords
-      .filter((w) => {
-        if (w.level !== selectedLevel) return false;
-        const p = state.wordProgress[w.id];
-        if (!p) return true;
-        const s = p.status || getWordStatus(p);
-        return ![WORD_STATUS.LEARNED, WORD_STATUS.KNOWN].includes(s);
-      })
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 15);
-
-    if (!candidates.length) return;
-    navigation.navigate("QuickScan", {
-      words: candidates,
-      level: selectedLevel,
-    });
-  };
-
-  const color = LEVEL_COLORS[selectedLevel];
-  const lp = levelProgress;
+  // ── Durum ──────────────────────────────────────────────────────────────
+  // Öncelik sırası:
+  // 1. Tekrar zamanı geldi (hasReview)         → Tekrar butonu (her zaman ilk iş)
+  // 2. Günlük 5 kotasında hâlâ boş yer var      → Öğren butonu (kalan kadar)
+  //    (eski kelimeler bir sonraki tura beklerken bile — kota dolana kadar
+  //    yeni kelime eklemeye devam edilebilir: 5 yeni, ya da 2 eski+3 yeni
+  //    gibi karma kombinasyonlar hep mümkün olmalı)
+  // 3. Kota dolu ama hâlâ döngüde (waiting) kelime var → Da Vinci çağıracak
+  // 4. Kota dolu ve hiçbir şey döngüde değil (hepsi dinleniyor) → Yarın bekliyor
+  //
+  // DÜZELTME: Eskiden "waitingCount>0 iken Learn kartı gizlensin" kuralı
+  // vardı — bu, eski kelimeler bir sonraki turunu beklerken kotanın geri
+  // kalanının hiç kullanılamamasına, gereksiz yere "Da Vinci çağıracak"
+  // ekranında beklenmesine yol açıyordu. Artık kota dolana kadar Learn
+  // kartı her zaman öncelikli.
+  const showReviewBtn = hasReview;
+  const showLearnBtn = !hasReview && hasNew && remainingToday > 0;
+  const showWaitReview = !hasReview && !showLearnBtn && waitingCount > 0;
+  const showWaitTomorrow =
+    !hasReview && !showLearnBtn && waitingCount === 0 && restingCount > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={s.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={s.scroll}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>Öğren</Text>
-          <Text style={styles.sub}>
-            Bugün {dailyStats.todayStudied} kelime öğrendin
-          </Text>
+        {/* Başlık */}
+        <View style={s.topRow}>
+          <View>
+            <Text style={s.title}>Da Vinci Words</Text>
+            <Text style={s.subtitle}>
+              {stats.totalLearned} kelime öğrenildi
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={s.statsBtn}
+            onPress={() => navigation.navigate("Stats")}
+          >
+            <Ionicons
+              name="bar-chart-outline"
+              size={22}
+              color={COLORS.accent}
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Seviye seçici */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.levelRow}
+          style={s.levelRow}
+          contentContainerStyle={{ gap: 8, paddingHorizontal: SPACING.lg }}
         >
           {LEVELS.map((lvl) => {
+            const lc = LEVEL_COLORS[lvl];
+            const active = lvl === selectedLevel;
             const words = allWords.filter((w) => w.level === lvl);
-            const learned = words.filter((w) => {
-              const p = state.wordProgress[w.id];
-              if (!p) return false;
-              const s = p.status || getWordStatus(p);
-              return [
-                "done",
-                "learned",
-                "known",
-                WORD_STATUS.LEARNED,
-                WORD_STATUS.KNOWN,
-              ].includes(s);
-            }).length;
+            const learned = words.filter((w) =>
+              [STATUS.LEARNED, STATUS.KNOWN].includes(wp[w.id]?.status)
+            ).length;
             const pct = words.length
               ? Math.round((learned / words.length) * 100)
               : 0;
-            const lc = LEVEL_COLORS[lvl];
-            const active = selectedLevel === lvl;
-            const done = pct === 100;
             return (
               <TouchableOpacity
                 key={lvl}
                 style={[
-                  styles.levelChip,
+                  s.chip,
                   active && { backgroundColor: lc, borderColor: lc },
-                  !active && { borderColor: lc + "60" },
-                  done && !active && { opacity: 0.5 },
                 ]}
                 onPress={() => setSelectedLevel(lvl)}
               >
-                <View
-                  style={[
-                    styles.levelChipBar,
-                    {
-                      width: `${pct}%`,
-                      backgroundColor: active
-                        ? "rgba(255,255,255,0.25)"
-                        : lc + "30",
-                    },
-                  ]}
-                />
-                <Text
-                  style={[
-                    styles.levelChipText,
-                    { color: active ? "#fff" : lc },
-                  ]}
-                >
-                  {done ? "✅" : lvl}
+                <Text style={[s.chipTxt, { color: active ? "#fff" : lc }]}>
+                  {pct === 100 ? "✅" : lvl}
                 </Text>
                 <Text
                   style={[
-                    styles.levelChipPct,
+                    s.chipPct,
                     { color: active ? "rgba(255,255,255,0.8)" : lc + "AA" },
                   ]}
                 >
@@ -293,181 +192,162 @@ export default function LearnScreen({ navigation, route }) {
           })}
         </ScrollView>
 
-        {/* Seviye ilerleme */}
-        <View style={[styles.levelCard, { borderColor: color + "40" }]}>
-          <View style={styles.levelCardTop}>
-            <View>
-              <Text style={[styles.levelCardTitle, { color }]}>
-                {selectedLevel} Seviyesi
-              </Text>
-              <Text style={styles.levelCardSub}>
-                {lp.learned}/{lp.total} kelime öğrenildi
-              </Text>
-            </View>
-            <Text style={[styles.levelCardPct, { color }]}>{lp.pct}%</Text>
+        {/* Seviye progress */}
+        <View style={s.progressCard}>
+          <View style={s.progressTop}>
+            <Text style={s.progressLbl}>{selectedLevel} Seviyesi</Text>
+            <Text style={[s.progressPct, { color }]}>{levelProgress.pct}%</Text>
           </View>
-          <View style={styles.barBg}>
+          <View style={s.progressBg}>
             <View
               style={[
-                styles.barFill,
-                { width: `${lp.pct}%`, backgroundColor: color },
+                s.progressFill,
+                { width: `${levelProgress.pct}%`, backgroundColor: color },
               ]}
             />
           </View>
+          <Text style={s.progressSub}>
+            {levelProgress.learned} / {levelProgress.total} kelime
+          </Text>
         </View>
 
-        {/* ── ANA DURUM KARTI ── */}
-
-        {/* 1. Tekrar var mı? */}
-        {hasReview && (
+        {/* 1. Tekrar zamanı */}
+        {showReviewBtn && (
           <TouchableOpacity
-            style={styles.reviewCard}
-            onPress={handleStartReview}
+            style={s.reviewCard}
+            onPress={() => {
+              navigation.navigate("Review", {
+                words: reviewWords,
+                reviewType: getReviewType(reviewWords, wp),
+              });
+            }}
             activeOpacity={0.9}
           >
             <LinearGradient
               colors={[COLORS.secondary, COLORS.secondary + "CC"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.reviewGrad}
+              style={s.reviewGrad}
             >
-              <Text style={styles.reviewEmoji}>🔄</Text>
+              <Text style={s.reviewEmoji}>🔄</Text>
               <View style={{ flex: 1 }}>
-                <Text style={styles.reviewTitle}>
+                <Text style={s.reviewTitle}>
                   {reviewWords.length} kelime tekrar bekliyor!
                 </Text>
-                <Text style={styles.reviewSub}>
-                  Şimdi tekrar yap — hafızan pekişsin
-                </Text>
+                <Text style={s.reviewSub}>Şimdi tekrar et → hafızana işle</Text>
               </View>
-              <Ionicons name="arrow-forward" size={22} color="#fff" />
+              <Ionicons name="chevron-forward" size={20} color="#fff" />
             </LinearGradient>
           </TouchableOpacity>
         )}
 
-        {/* 2. Bugün oturum yapıldı ama tekrar yok → bekleme durumu */}
-        {sessionDoneToday &&
-          !hasReview &&
-          !doneWordsReady &&
-          (() => {
-            // retry varsa ama zamanı gelmediyse "yarın" kartı göster
-            const retryNotReady = allWords.some((w) => {
-              const p = state.wordProgress[w.id];
-              return (
-                p?.status === "retry" &&
-                p.nextReviewAt &&
-                Date.now() < new Date(p.nextReviewAt).getTime()
-              );
-            });
-            return !hasRetryWords || retryNotReady;
-          })() && (
-            <View style={styles.waitCard}>
-              <Text style={styles.waitEmoji}>🧠</Text>
-              <Text style={styles.waitTitle}>
-                Da Vinci sizi tekrar çağıracak
-              </Text>
-              <Text style={styles.waitSub}>
-                {nextReviewIn && nextReviewIn.ms > 0
-                  ? `${
-                      nextReviewIn.hours > 0
-                        ? `${nextReviewIn.hours} saat `
-                        : ""
-                    }${nextReviewIn.minutes} dakika sonra tekrar zamanı`
-                  : "Bugünkü tekrarlar tamamlandı! Yarın yeni kelimeler gelecek."}
-              </Text>
-              <View style={styles.waitDots}>
-                {[0, 1, 2].map((i) => (
-                  <View
-                    key={i}
-                    style={[styles.waitDot, { opacity: 0.3 + i * 0.35 }]}
-                  />
-                ))}
-              </View>
-            </View>
-          )}
-
-        {/* 3. Yeni oturum başlatılabilir */}
-        {(hasNewWords || hasRetryWords || doneWordsReady) &&
-          !hasReview &&
-          (!sessionDoneToday || hasRetryWords || doneWordsReady) &&
-          !lp.done && (
-            <View style={styles.actionArea}>
-              {/* Ana buton */}
-              <TouchableOpacity
-                style={styles.mainBtn}
-                onPress={handleStartSession}
-                activeOpacity={0.9}
-              >
-                <LinearGradient
-                  colors={[color, color + "CC"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.mainBtnGrad}
-                >
-                  <Ionicons name="play-circle" size={26} color="#fff" />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.mainBtnTitle}>{btnLabel}</Text>
-                    <Text style={styles.mainBtnSub}>
-                      5 yeni kelime • Da Vinci metodu
-                    </Text>
-                  </View>
-                  <Ionicons name="arrow-forward" size={20} color="#fff" />
-                </LinearGradient>
-              </TouchableOpacity>
-
-              {/* Hızlı Tarama */}
-              <TouchableOpacity
-                style={[styles.scanBtn, { borderColor: color + "60" }]}
-                onPress={handleQuickScan}
-              >
-                <Ionicons name="flash" size={18} color={color} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.scanTitle, { color }]}>
-                    Hızlı Tarama
-                  </Text>
-                  <Text style={styles.scanSub}>
-                    Hangilerini bildiğini işaretle
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          )}
-
-        {/* 4. Seviye tamamlandı */}
-        {lp.done && (
-          <View style={[styles.doneCard, { borderColor: color + "40" }]}>
-            <Text style={styles.doneEmoji}>🏆</Text>
-            <Text style={[styles.doneTitle, { color }]}>
-              {selectedLevel} Tamamlandı!
+        {/* 2. Da Vinci çağıracak */}
+        {showWaitReview && (
+          <View style={s.waitCard}>
+            <Text style={s.waitEmoji}>🧠</Text>
+            <Text style={s.waitTitle}>Da Vinci sizi tekrar çağıracak</Text>
+            <Text style={s.waitSub}>
+              {nextReviewIn
+                ? `${
+                    nextReviewIn.hours > 0 ? `${nextReviewIn.hours} saat ` : ""
+                  }${nextReviewIn.minutes} dakika sonra tekrar zamanı`
+                : "Yakında tekrar zamanı"}
             </Text>
-            <Text style={styles.doneSub}>Bir sonraki seviyeye hazırsın</Text>
-            {LEVELS.indexOf(selectedLevel) < LEVELS.length - 1 && (
-              <TouchableOpacity
-                style={[styles.nextLvlBtn, { backgroundColor: color }]}
-                onPress={() =>
-                  setSelectedLevel(LEVELS[LEVELS.indexOf(selectedLevel) + 1])
-                }
-              >
-                <Text style={styles.nextLvlText}>
-                  {LEVELS[LEVELS.indexOf(selectedLevel) + 1]}'e Geç →
+            <View style={s.dots}>
+              {[0, 1, 2].map((i) => (
+                <View key={i} style={[s.dot, { opacity: 0.3 + i * 0.35 }]} />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* 3. Yarın bekliyor (günün 5 kelimelik hedefi tam bitti) */}
+        {showWaitTomorrow && (
+          <View style={s.waitCard}>
+            <Text style={s.waitEmoji}>🌙</Text>
+            <Text style={s.waitTitle}>Yarın seni bekliyorum!</Text>
+            <Text style={s.waitSub}>
+              Bugünkü kelimeler tamamlandı. Yarın yeni kelimeler ve tekrarlar
+              seni bekliyor.
+            </Text>
+          </View>
+        )}
+
+        {/* 4. Öğren butonu — sadece kalan kadar kelime istenir */}
+        {showLearnBtn && (
+          <TouchableOpacity
+            style={s.learnCard}
+            onPress={() =>
+              navigation.navigate("PreScan", {
+                level: selectedLevel,
+                // DÜZELTME: Eskiden PreScan'e "bugün zaten kaç kelime
+                // bitti" (initialCount) gönderilip PreScan bunu 5'e kadar
+                // saymaya devam ediyordu. Bu, ekranda "2/5" gibi kafa
+                // karıştırıcı, oturumun kendi ilerlemesini yansıtmayan bir
+                // sayı gösteriyordu. Artık PreScan'e sadece "bu oturumda
+                // kaç kelimeye ihtiyaç var" (wordsNeeded) gönderiliyor;
+                // PreScan kendi sayacını her zaman 0'dan başlatıp bu
+                // hedefe kadar sayıyor (örn. "0/4" → "4/4").
+                wordsNeeded: remainingToday,
+              })
+            }
+            activeOpacity={0.9}
+          >
+            <LinearGradient colors={[color, color + "CC"]} style={s.learnGrad}>
+              <Text style={s.learnEmoji}>🚀</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.learnTitle}>
+                  {hasStarted ? "Öğrenmeye Devam Et" : "Öğrenmeye Başla"}
                 </Text>
-              </TouchableOpacity>
-            )}
-          </View>
+                <Text style={s.learnSub}>
+                  {batchInPlay > 0
+                    ? `${remainingToday} kelime daha • Da Vinci metodu`
+                    : "Günlük 5 kelime • Da Vinci metodu"}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
         )}
 
-        {/* 5. Bu seviyede kelime kalmadı ama tamamlanmadı */}
-        {!sessionDoneToday && !hasNewWords && !lp.done && (
-          <View style={styles.waitCard}>
-            <Text style={styles.waitEmoji}>✨</Text>
-            <Text style={styles.waitTitle}>
-              Tüm kelimeler öğrenme aşamasında
-            </Text>
-            <Text style={styles.waitSub}>
-              Tekrar zamanı geldiğinde bildirim alacaksın
-            </Text>
-          </View>
-        )}
+        {/* Seviye tamamlandı */}
+        {!hasNew &&
+          !hasReview &&
+          waitingCount === 0 &&
+          levelProgress.pct === 100 && (
+            <View style={s.waitCard}>
+              <Text style={s.waitEmoji}>🏆</Text>
+              <Text style={s.waitTitle}>{selectedLevel} Tamamlandı!</Text>
+              <Text style={s.waitSub}>
+                Bir sonraki seviyeye geçmeye hazırsın
+              </Text>
+              {LEVELS.indexOf(selectedLevel) < LEVELS.length - 1 && (
+                <TouchableOpacity
+                  style={[s.nextBtn, { backgroundColor: color }]}
+                  onPress={() =>
+                    setSelectedLevel(LEVELS[LEVELS.indexOf(selectedLevel) + 1])
+                  }
+                >
+                  <Text style={s.nextBtnTxt}>
+                    {LEVELS[LEVELS.indexOf(selectedLevel) + 1]}'e Geç →
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+        {/* İstatistikler */}
+        <View style={s.statsRow}>
+          {[
+            { num: stats.totalLearned, lbl: "Öğrenilen" },
+            { num: stats.totalKnown, lbl: "Bilinen" },
+            { num: stats.todayStudied, lbl: "Bugün" },
+            { num: stats.dueCount, lbl: "Tekrar" },
+          ].map((item, i) => (
+            <View key={i} style={s.statBox}>
+              <Text style={s.statNum}>{item.num}</Text>
+              <Text style={s.statLbl}>{item.lbl}</Text>
+            </View>
+          ))}
+        </View>
 
         <View style={{ height: 80 }} />
       </ScrollView>
@@ -475,91 +355,109 @@ export default function LearnScreen({ navigation, route }) {
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  scroll: { paddingHorizontal: SPACING.lg },
-
-  header: { paddingTop: SPACING.md, paddingBottom: SPACING.sm },
-  title: {
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZES.xxl,
-    fontWeight: "800",
-  },
-  sub: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-
-  levelRow: { paddingVertical: SPACING.md, gap: SPACING.sm },
-  levelChip: {
-    minWidth: 64,
-    height: 56,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1.5,
-    backgroundColor: COLORS.backgroundCard,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: SPACING.sm,
-    overflow: "hidden",
-    position: "relative",
-  },
-  levelChipBar: { position: "absolute", left: 0, top: 0, bottom: 0 },
-  levelChipText: { fontSize: FONT_SIZES.md, fontWeight: "900", zIndex: 1 },
-  levelChipPct: { fontSize: 10, fontWeight: "600", zIndex: 1 },
-
-  levelCard: {
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    borderWidth: 1.5,
-    gap: SPACING.md,
-    marginBottom: SPACING.lg,
-  },
-  levelCardTop: {
+  scroll: { paddingBottom: 20 },
+  topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.lg,
+    paddingBottom: SPACING.md,
   },
-  levelCardTitle: { fontSize: FONT_SIZES.lg, fontWeight: "800" },
-  levelCardSub: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-  levelCardPct: { fontSize: FONT_SIZES.xxl, fontWeight: "900" },
-  barBg: {
+  title: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.xxl,
+    fontWeight: "900",
+  },
+  subtitle: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm, marginTop: 2 },
+  statsBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.backgroundCard,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  levelRow: { marginBottom: SPACING.md },
+  chip: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.backgroundCard,
+    alignItems: "center",
+    minWidth: 60,
+  },
+  chipTxt: { fontWeight: "800", fontSize: FONT_SIZES.md },
+  chipPct: { fontSize: 10, fontWeight: "600" },
+  progressCard: {
+    marginHorizontal: SPACING.lg,
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  progressTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: SPACING.sm,
+  },
+  progressLbl: {
+    color: COLORS.textPrimary,
+    fontWeight: "700",
+    fontSize: FONT_SIZES.md,
+  },
+  progressPct: { fontWeight: "800", fontSize: FONT_SIZES.md },
+  progressBg: {
     height: 8,
     backgroundColor: COLORS.border,
     borderRadius: 4,
-    overflow: "hidden",
+    marginBottom: SPACING.xs,
   },
-  barFill: { height: 8, borderRadius: 4 },
-
-  // Tekrar kartı
+  progressFill: { height: 8, borderRadius: 4 },
+  progressSub: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
   reviewCard: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.lg,
     borderRadius: RADIUS.xl,
     overflow: "hidden",
-    marginBottom: SPACING.md,
   },
   reviewGrad: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SPACING.md,
     padding: SPACING.lg,
+    gap: SPACING.md,
   },
   reviewEmoji: { fontSize: 32 },
-  reviewTitle: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "800" },
-  reviewSub: { color: "rgba(255,255,255,0.8)", fontSize: FONT_SIZES.xs },
-
-  // Bekleme kartı
+  reviewTitle: { color: "#fff", fontSize: FONT_SIZES.md, fontWeight: "800" },
+  reviewSub: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: FONT_SIZES.xs,
+    marginTop: 2,
+  },
   waitCard: {
+    marginHorizontal: SPACING.lg,
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.xl,
     padding: SPACING.xl,
     alignItems: "center",
-    gap: SPACING.md,
+    gap: SPACING.sm,
+    marginBottom: SPACING.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
-    marginBottom: SPACING.lg,
   },
-  waitEmoji: { fontSize: 48 },
+  waitEmoji: { fontSize: 40 },
   waitTitle: {
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.lg,
-    fontWeight: "700",
+    fontWeight: "800",
     textAlign: "center",
   },
   waitSub: {
@@ -568,55 +466,48 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 20,
   },
-  waitDots: { flexDirection: "row", gap: SPACING.sm },
-  waitDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.accent,
-  },
-
-  // Aksiyon
-  actionArea: { gap: SPACING.sm, marginBottom: SPACING.lg },
-  mainBtn: { borderRadius: RADIUS.xl, overflow: "hidden" },
-  mainBtnGrad: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.md,
-    padding: SPACING.lg,
-  },
-  mainBtnTitle: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "700" },
-  mainBtnSub: { color: "rgba(255,255,255,0.8)", fontSize: FONT_SIZES.xs },
-  scanBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.md,
-    padding: SPACING.md,
-    borderRadius: RADIUS.xl,
-    borderWidth: 1.5,
-    backgroundColor: COLORS.backgroundCard,
-  },
-  scanTitle: { fontSize: FONT_SIZES.md, fontWeight: "700" },
-  scanSub: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-
-  // Tamamlandı
-  doneCard: {
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.xl,
-    alignItems: "center",
-    gap: SPACING.sm,
-    borderWidth: 1,
+  dots: { flexDirection: "row", gap: 8, marginTop: SPACING.sm },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.accent },
+  learnCard: {
+    marginHorizontal: SPACING.lg,
     marginBottom: SPACING.lg,
+    borderRadius: RADIUS.xl,
+    overflow: "hidden",
   },
-  doneEmoji: { fontSize: 48 },
-  doneTitle: { fontSize: FONT_SIZES.xl, fontWeight: "800" },
-  doneSub: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm },
-  nextLvlBtn: {
+  learnGrad: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: SPACING.lg,
+    gap: SPACING.md,
+  },
+  learnEmoji: { fontSize: 28 },
+  learnTitle: { color: "#fff", fontSize: FONT_SIZES.lg, fontWeight: "800" },
+  learnSub: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: FONT_SIZES.xs,
+    marginTop: 2,
+  },
+  nextBtn: {
+    marginTop: SPACING.sm,
     paddingHorizontal: SPACING.xl,
     paddingVertical: SPACING.md,
     borderRadius: RADIUS.full,
-    marginTop: SPACING.sm,
   },
-  nextLvlText: { color: "#fff", fontWeight: "700", fontSize: FONT_SIZES.md },
+  nextBtnTxt: { color: "#fff", fontWeight: "700", fontSize: FONT_SIZES.md },
+  statsRow: {
+    flexDirection: "row",
+    marginHorizontal: SPACING.lg,
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  statBox: { flex: 1, alignItems: "center", gap: 4 },
+  statNum: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.xxl,
+    fontWeight: "900",
+  },
+  statLbl: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
 });
