@@ -8,10 +8,14 @@ export const STATUS = {
 };
 export const WORD_STATUS = STATUS;
 
-// TEST: 1dk | GERÇEK: 60*60*1000
-export const HOUR = 1 * 60 * 1000;
-// TEST: 2dk | GERÇEK: 24*60*60*1000
-export const DAY = 2 * 60 * 1000;
+// GERÇEK DEĞERLER — test modu kapatıldı.
+// Tekrarlar artık 1 saatte 1 (HOUR), gün geçişi 24 saatte 1 (DAY).
+// Bu iki sabit HOUR/DAY tüm ekranlarda (LearningSessionScreen,
+// ReviewScreen, notifications) TEK kaynaktan (buradan) import edilip
+// kullanılıyor — başka hiçbir dosyada ayrıca tanımlı değil, bu yüzden
+// senkron bozulma riski yok.
+export const HOUR = 60 * 60 * 1000;
+export const DAY = 24 * 60 * 60 * 1000;
 
 // Günlük hedef: bir günde tamamlanması gereken kelime sayısı
 // (hem yeni öğrenilen hem de tekrar edilip bugün sonuçlanan kelimeler dahil)
