@@ -42,24 +42,14 @@ export default function PreScanScreen({ navigation, route }) {
   const { state, actions } = useApp();
   const color = LEVEL_COLORS[level] || COLORS.accent;
 
-  // DÜZELTME: Eskiden buraya "bugün zaten tamamlanan" sayısı initialCount
-  // olarak gelip sayaç oradan başlıyordu — ekranda "2/5" gibi kafa
-  // karıştırıcı bir sayı görünüyordu (kullanıcı "4 kelime kaldı" diye
-  // girdiğinde 0'dan değil 1 veya 2'den başlıyor gibi görünüyordu).
-  // Artık bu ekran tamamen kendi başına: LearnScreen sadece "bu oturumda
-  // kaç kelimeye ihtiyaç var" (wordsNeeded) bilgisini gönderiyor, sayaç
-  // burada HER ZAMAN 0'dan başlayıp o hedefe kadar sayıyor.
+  // LearnScreen sadece "bu oturumda kaç kelimeye ihtiyaç var" (wordsNeeded)
+  // bilgisini gönderiyor, sayaç burada HER ZAMAN 0'dan başlayıp o hedefe
+  // kadar sayıyor.
   const SESSION_TARGET = Math.max(wordsNeeded, 1);
   const sessionCountRef = useRef(0);
   const [sessionCount, setSessionCount] = useState(0);
 
-  // DÜZELTME: Havuz artık sadece ekran ilk açıldığında BİR KEZ oluşturuluyor.
-  // Eskiden useMemo, state.wordProgress her swipe'ta değiştiği için tekrar
-  // çalışıyordu ve getNewWords içindeki rastgele sort() diziyi her seferinde
-  // yeniden karıştırıyordu — cardIdxRef eski sıraya göre ilerlediği için
-  // ekranda görünen kelime ile işlenen kelime tutmuyordu (kelime atlama /
-  // yanlış kelimeye işlem uygulama bugu). Artık dizi sabit, sadece bir kez
-  // karışıyor ve index'ler tutarlı ilerliyor.
+  // Havuz sadece ekran ilk açıldığında BİR KEZ oluşturuluyor.
   const [pool] = useState(() =>
     getNewWords(actions.getAllWords(), state.wordProgress, level, 50)
   );
@@ -329,7 +319,7 @@ export default function PreScanScreen({ navigation, route }) {
         </Animated.View>
       </View>
 
-      <View style={s.btns}>
+      <View style={s.btns} >
         <TouchableOpacity
           style={[
             s.swipeBtn,

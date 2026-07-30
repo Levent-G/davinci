@@ -58,17 +58,11 @@ export default function LearnScreen({ navigation }) {
   const nextReviewIn = useMemo(() => getNextReviewIn(wp), [wp, tick]);
   const stats = useMemo(() => getDailyStats(allWords, wp), [wp]);
 
-  // DÜZELTME (KRİTİK): Artık hiçbir yerde gerçek takvim tarihine (isToday)
-  // bakılmıyor. Bunun yerine üç ayrı, tarihsiz durum takip ediliyor:
+  // Hiçbir yerde gerçek takvim tarihine (isToday) bakılmıyor. Bunun yerine
+  // üç ayrı, tarihsiz durum takip ediliyor:
   //  - hasReview: şu an tekrar zamanı gelmiş kelime var mı
   //  - waitingCount: 3 turluk döngüde olup henüz sırası gelmemiş kelime
-  //    (bir sonraki tur bekleniyor — "Da Vinci çağıracak" burada gösterilir)
-  //  - restingCount: döngüsü tamamen bitmiş (öğrenildi ya da yarına
-  //    ertelendi) ve şu an dinlenen kelime
-  // Eskiden takvim tarihi kullanıldığı için, test sabitleriyle (1-2 dk)
-  // hızlı test yaparken Gün 1 ve Gün 2 aynı gerçek gün içinde kaldığından
-  // Gün 1'in tamamlanmış 5 kelimesi Gün 2'de de "bugün" sayılıyor ve daha
-  // 1. tekrar bile yapılmadan "Yarın seni bekliyorum" tetikleniyordu.
+  //  - restingCount: döngüsü tamamen bitmiş ve şu an dinlenen kelime
   const waitingCount = useMemo(() => getWaitingReviewCount(wp), [wp, tick]);
   const restingCount = useMemo(() => getRestingCount(wp), [wp, tick]);
   const batchInPlay = Math.min(
@@ -107,17 +101,8 @@ export default function LearnScreen({ navigation }) {
   // Öncelik sırası:
   // 1. Tekrar zamanı geldi (hasReview)         → Tekrar butonu (her zaman ilk iş)
   // 2. Günlük 5 kotasında hâlâ boş yer var      → Öğren butonu (kalan kadar)
-  //    (eski kelimeler bir sonraki tura beklerken bile — kota dolana kadar
-  //    yeni kelime eklemeye devam edilebilir: 5 yeni, ya da 2 eski+3 yeni
-  //    gibi karma kombinasyonlar hep mümkün olmalı)
   // 3. Kota dolu ama hâlâ döngüde (waiting) kelime var → Da Vinci çağıracak
   // 4. Kota dolu ve hiçbir şey döngüde değil (hepsi dinleniyor) → Yarın bekliyor
-  //
-  // DÜZELTME: Eskiden "waitingCount>0 iken Learn kartı gizlensin" kuralı
-  // vardı — bu, eski kelimeler bir sonraki turunu beklerken kotanın geri
-  // kalanının hiç kullanılamamasına, gereksiz yere "Da Vinci çağıracak"
-  // ekranında beklenmesine yol açıyordu. Artık kota dolana kadar Learn
-  // kartı her zaman öncelikli.
   const showReviewBtn = hasReview;
   const showLearnBtn = !hasReview && hasNew && remainingToday > 0;
   const showWaitReview = !hasReview && !showLearnBtn && waitingCount > 0;
@@ -278,14 +263,6 @@ export default function LearnScreen({ navigation }) {
             onPress={() =>
               navigation.navigate("PreScan", {
                 level: selectedLevel,
-                // DÜZELTME: Eskiden PreScan'e "bugün zaten kaç kelime
-                // bitti" (initialCount) gönderilip PreScan bunu 5'e kadar
-                // saymaya devam ediyordu. Bu, ekranda "2/5" gibi kafa
-                // karıştırıcı, oturumun kendi ilerlemesini yansıtmayan bir
-                // sayı gösteriyordu. Artık PreScan'e sadece "bu oturumda
-                // kaç kelimeye ihtiyaç var" (wordsNeeded) gönderiliyor;
-                // PreScan kendi sayacını her zaman 0'dan başlatıp bu
-                // hedefe kadar sayıyor (örn. "0/4" → "4/4").
                 wordsNeeded: remainingToday,
               })
             }

@@ -30,11 +30,6 @@ import { scheduleAllReviews } from "../utils/notifications";
 
 const { width } = Dimensions.get("window");
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
-// DÜZELTME: HOUR artık davinciAlgorithm.js'den import ediliyor.
-// Eskiden burada ayrı bir kopyası tanımlıydı; ikisi birbirinden bağımsız
-// değiştirilirse (örn. testten gerçek süreye geçerken sadece biri
-// güncellenirse) bildirim zamanları ile nextReviewAt zamanları
-// birbirinden sapardı.
 
 const STAGES = [
   { id: 0, name: "Merak", icon: "🔍", color: "#F5A623" },
@@ -127,11 +122,10 @@ export default function LearningSessionScreen({ navigation, route }) {
         ...prog,
         startedAt: prog.startedAt || new Date().toISOString(),
       });
-      // DÜZELTME: Bu kelime, o an döngüde olan diğer kelimeler varsa
-      // (örn. dünden kalan ve bugün tekrar edilmiş kelimeler) onların
-      // ortak zamanına hizalanıyor — böylece "günlük 5" grubu tek bir
-      // zamanlamada ilerliyor, tekrarlar parça parça değil hep birlikte
-      // gelir.
+      // Bu kelime, o an döngüde olan diğer kelimeler varsa (örn. dünden
+      // kalan ve bugün tekrar edilmiş kelimeler ya da halihazırda due
+      // olmuş bir grup) onların ortak zamanına hizalanıyor — böylece
+      // "günlük 5" grubu tek bir zamanlamada ilerliyor.
       newProg = alignToGroup(newProg, state.wordProgress, word.id);
       let mergedProgress = state.wordProgress;
       try {
@@ -139,9 +133,6 @@ export default function LearningSessionScreen({ navigation, route }) {
         mergedProgress = { ...state.wordProgress, [word.id]: newProg };
       } catch {}
 
-      // DÜZELTME: Bildirimde artık gerçek "döngüde olan kelime" sayısı
-      // gönderiliyor (eskiden hep sabit "1" gönderiliyordu). Bu hesap
-      // takvim tarihine değil, kelimelerin durumuna bakar.
       try {
         const pendingCount = getInFlightReviewCount(mergedProgress);
         await scheduleAllReviews(pendingCount || 1, HOUR);
@@ -210,12 +201,8 @@ export default function LearningSessionScreen({ navigation, route }) {
               {
                 text: "Çık",
                 onPress: () => {
-                  // DÜZELTME: Kullanıcı 5-aşamalı öğrenmeden yarıda çıkarsa
-                  // kelime eskiden "learning" durumunda sonsuza kadar
-                  // takılı kalıyordu (getNewWords sadece "new"/tanımsız
-                  // durumdakileri getirir) — bir daha hiç karşısına
-                  // çıkmıyordu. Şimdi "new"e geri alınıyor, tekrar
-                  // öğrenme havuzuna dönüyor.
+                  // Kullanıcı 5-aşamalı öğrenmeden yarıda çıkarsa kelime
+                  // "new"e geri alınıyor, tekrar öğrenme havuzuna dönüyor.
                   if (word) {
                     actions.updateWordProgress(word.id, {
                       ...(state.wordProgress[word.id] || {}),
@@ -840,7 +827,7 @@ const s = StyleSheet.create({
   optTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
   bottom: {
     position: "absolute",
-    bottom: 0,
+    bottom: 30,
     left: 0,
     right: 0,
     paddingHorizontal: SPACING.lg,

@@ -32,7 +32,6 @@ import {
 
 const { width } = Dimensions.get("window");
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
-// DÜZELTME: HOUR artık tek kaynaktan (davinciAlgorithm.js) geliyor.
 
 export default function ReviewScreen({ navigation, route }) {
   const { words = [], reviewType = "r1" } = route.params || {};
@@ -80,15 +79,6 @@ export default function ReviewScreen({ navigation, route }) {
   }, [idx]);
 
   // Bildirim — done olunca 1 kez
-  // DÜZELTME: Eskiden `p?.reviewCount` diye var olmayan bir alana
-  // bakılıyordu (asıl alan `reviewsDone`), bu yüzden ortalama her zaman 0
-  // çıkıyor ve bildirim hep "1. Tekrar Zamanı!" yazıyordu — kaçıncı tur
-  // olduğuna bakılmaksızın. Ayrıca eski bildirimler iptal edilmeden yeni
-  // bildirim ekleniyordu. Şimdi:
-  //  - sadece hâlâ döngüde olan (dayDone olmamış) kelimeler için
-  //    bir sonraki tur bildirimi planlanıyor,
-  //  - eğer tüm kelimeler bugün tamamlandıysa (öğrenildi ya da yarına
-  //    ertelendi) hiç HOUR-sonrası bildirimi planlanmıyor.
   useEffect(() => {
     if (!done || !results.length) return;
     (async () => {
@@ -169,12 +159,10 @@ export default function ReviewScreen({ navigation, route }) {
 
     const prog = state.wordProgress[word.id] || {};
     let newProg = afterQuiz(prog, opt.isCorrect);
-    // DÜZELTME: Bu kelime, döngüde kalmaya devam ediyorsa (henüz 3 turu
-    // bitmediyse), grupta başka bekleyen kelimeler varsa onların ortak
-    // zamanına hizalanıyor. Böylece aynı gün içindeki tüm kelimeler
-    // (eski+yeni karışık olsa bile) tek bir ortak tekrar zamanlamasında
-    // buluşuyor, "1 kelime geldi, biraz sonra 3 kelime daha geldi" gibi
-    // parça parça tekrar akışı ortadan kalkıyor.
+    // Bu kelime, döngüde kalmaya devam ediyorsa (henüz 3 turu bitmediyse),
+    // grupta başka bekleyen kelimeler varsa onların ortak zamanına
+    // hizalanıyor. Böylece aynı gün içindeki tüm kelimeler (eski+yeni
+    // karışık olsa bile) tek bir ortak tekrar zamanlamasında buluşuyor.
     newProg = alignToGroup(newProg, state.wordProgress, word.id);
     try {
       await actions.updateWordProgress(word.id, newProg);
@@ -205,10 +193,6 @@ export default function ReviewScreen({ navigation, route }) {
     const allLearned = results.every(
       (r) => progress[r.word.id]?.status === STATUS.LEARNED
     );
-    // DÜZELTME: "Da Vinci sizi 1 saat sonra tekrar çağıracak" mesajı
-    // artık sadece gerçekten bugün tekrara devam edecek kelime varsa
-    // gösteriliyor. 3 kez yanlış yapılıp yarına ertelenen kelimeler için
-    // ayrı ve doğru bir mesaj var.
     const stillPendingToday = results.some((r) => {
       const p = progress[r.word.id];
       return p?.status === STATUS.REVIEW && !p?.dayDone;

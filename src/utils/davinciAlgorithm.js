@@ -30,9 +30,6 @@ export const getWordStatus = getStatus;
 export const isDueForReview = (p) => isDue(p?.nextReviewAt);
 
 // Bir progress kaydının "bugün dokunuldu mu" olduğunu tek yerden kontrol et.
-// DÜZELTME: eskiden sadece startedAt kontrol ediliyordu; ama tekrar (quiz)
-// sırasında startedAt hiç güncellenmiyor, bu yüzden "bugün" tespiti
-// ikinci ve sonraki günlerde hep yanlış çıkıyordu. updatedAt eklendi.
 const touchedToday = (p) => isToday(p?.startedAt) || isToday(p?.updatedAt);
 
 // ─── 5 AŞAMA BİTTİ ───────────────────────────────────────
@@ -65,7 +62,7 @@ export const afterQuiz = (prog, isCorrect) => {
         wrongTotal: 0,
         updatedAt: now,
         nextReviewAt: new Date(Date.now() + DAY).toISOString(),
-        dayDone: true, // bu kelimenin bugünkü işi bitti (yarına ertelendi)
+        dayDone: true,
       };
     }
     // Öğrenildi!
@@ -77,17 +74,11 @@ export const afterQuiz = (prog, isCorrect) => {
       updatedAt: now,
       learnedAt: now,
       nextReviewAt: new Date(Date.now() + DAY).toISOString(),
-      dayDone: true, // bu kelimenin bugünkü işi bitti (öğrenildi)
+      dayDone: true,
     };
   }
 
   // Devam — bir sonraki tekrar 1 saat sonra
-  // DÜZELTME (KRİTİK): Bu dal eskiden dayDone alanını hiç sıfırlamıyordu.
-  // ...prog spread edildiği için, kelime önceki bir döngüde dayDone:true
-  // olmuşsa (örn. dün 3 yanlış yapıp yarına ertelenmişse), bugün 1.
-  // turunu daha yeni bitirmişken bile dayDone hâlâ true kalıyordu. Bu da
-  // "kelime bugün tamamen bitti" sanılmasına ve daha 3 tur bitmeden
-  // "Yarın seni bekliyorum" ekranının erken tetiklenmesine yol açıyordu.
   return {
     ...prog,
     status: STATUS.REVIEW,
@@ -141,14 +132,9 @@ export const hasDoneSessionToday = (progress) =>
   );
 
 // ─── GÜNLÜK PARTİ (BATCH) TAKİBİ — TAKVİM TARİHİNDEN BAĞIMSIZ ───────────
-// DÜZELTME (KRİTİK): Eskiden "bugün" gerçek takvim tarihine (isToday) göre
-// hesaplanıyordu. Ama test sabitleriyle (HOUR=1dk, DAY=2dk) test ederken
-// "Gün 1" ve "Gün 2" aynı gerçek takvim günü içinde geçiyor — bu yüzden
-// Gün 1'de biten 5 kelime hâlâ "bugün" sayılıp, Gün 2'de siz daha 1 tekrar
-// bile yapmadan "Yarın seni bekliyorum" ekranı yanlışlıkla tetikleniyordu.
-// Artık hiçbir yerde gerçek tarihe bakılmıyor; sadece kelimenin kendi
-// durumuna (due / bekliyor / dinleniyor) bakılıyor. Bu hem test modunda
-// hem gerçek kullanımda (HOUR=1sa, DAY=24sa) doğru çalışır.
+// "Bugün" hiçbir yerde gerçek takvim tarihine göre değil, kelimenin kendi
+// durumuna (due / bekliyor / dinleniyor) göre hesaplanıyor. Bu hem test
+// modunda (kısa HOUR/DAY) hem gerçek kullanımda doğru çalışır.
 
 // Hâlâ 3 turluk döngüde ama şu an due OLMAYAN (bir sonraki tura kadar
 // bekleyen) kelime sayısı
@@ -189,17 +175,18 @@ export const getBatchInPlayCount = (
   );
 
 // ─── GRUP (BATCH) ZAMAN SENKRONİZASYONU ─────────────────────────────────
-// DÜZELTME (KRİTİK): Eskiden her kelimenin nextReviewAt'i tamamen bağımsız
-// hesaplanıyordu (kendi tamamlanma anından +HOUR). Bu yüzden dünden kalan
-// kelimeler ile bugün yeni öğrenilen kelimeler farklı anlarda "due"
-// oluyor, tekrarlar "1 kelime geldi, bitince biraz sonra 3 kelime daha
-// geldi" şeklinde parça parça, tutarsız görünüyordu.
-// Artık bir kelime döngüye her katıldığında (yeni öğrenildiğinde ya da bir
+// Bir kelime döngüye her katıldığında (yeni öğrenildiğinde ya da bir
 // tekrar turunu bitirip bir sonrakini beklemeye başladığında), o an
 // döngüde olan DİĞER kelimelerin (henüz due olmamış, gelecekte planlı)
 // EN ERKEN zamanına hizalanıyor. Böylece bütün "günlük 5" grubu ortak tek
-// bir zamanlamada ilerliyor — 1. tekrar hepsi için aynı anda açılıyor,
-// 2. ve 3. tekrar da öyle.
+// bir zamanlamada ilerliyor.
+//
+// Bu fonksiyon SADECE "devam eden" turlar (quiz cevaplanırken, reviewsDone
+// zaten >=1) için kullanılıyor. Kasıtlı olarak sadece henüz due OLMAMIŞ
+// (gelecekteki) zamanlara bakıyor: bir tur işlenirken, henüz sırası
+// gelmemiş diğer kelimelerin nextReviewAt'i o anki (eski, zaten due olmuş)
+// turun tetikleme zamanını taşır — bunu bir sonraki tur için referans
+// almak yanlış olurdu (kelimeyi geçmişe/yanlış zamana hizalardı).
 export const getGroupNextReviewAt = (progress, excludeId) => {
   const times = Object.entries(progress)
     .filter(
@@ -208,24 +195,55 @@ export const getGroupNextReviewAt = (progress, excludeId) => {
         p?.status === STATUS.REVIEW &&
         !p?.dayDone &&
         p?.nextReviewAt &&
-        !isDue(p.nextReviewAt) // sadece henüz due OLMAMIŞ (gelecekteki) zamanlar geçerli
+        !isDue(p.nextReviewAt)
     )
     .map(([, p]) => new Date(p.nextReviewAt).getTime());
   return times.length ? Math.min(...times) : null;
 };
 
-// DÜZELTME (KRİTİK): Bir kelime 3. turunu bitirip döngüden çıktığında
-// (öğrenildi ya da yarına ertelendi — dayDone:true), o kelimenin
-// "dinlenme" bitiş zamanı (nextReviewAt=+DAY) eskiden tamamen bağımsız
-// hesaplanıyordu — o anda hangi saniyede cevaplandıysa o saniyeye göre.
-// Aynı gündeki 5 kelime sırayla cevaplandığı için (her biri arasında
-// birkaç saniyelik quiz-animasyon gecikmesi var), bu küçük fark test
-// modunda (DAY=2dk gibi kısa) bazı kelimelerin "yarın"ı diğerlerinden
-// önce gelmesine yol açıyordu — "hepsini doğru yaptım ama ertesi gün
-// '2 kelime daha' dedi" şikayetinin sebebi tam olarak buydu (3 kelime
-// zaten süresi geçip düşmüştü, 2'si henüz dinleniyordu). Şimdi bu geçiş
-// de gruba hizalanıyor — grupta zaten dinlenen (dayDone:true, henüz due
-// olmamış) başka kelime varsa, bu kelime de aynı zamana katılıyor.
+// DÜZELTME (KRİTİK — GÜN İÇİ SENKRON BUGU):
+// Eskiden bir kelime DÖNGÜYE İLK KEZ KATILDIĞINDA (5 aşamalı öğrenmeyi yeni
+// bitirdiğinde) da yukarıdaki getGroupNextReviewAt kullanılıyordu — yani
+// SADECE henüz due olmamış (bekleyen) diğer kelimelere bakılıyordu.
+//
+// SORUN (test edip doğrulandı): dünden kalıp bugün tekrar edilen kelimeler
+// (örn. 2 kelime) ile aynı gün yeni öğrenilen kelimeler (örn. 3 kelime)
+// arasında, 5 aşamalı öğrenme gerçek zamanda dakikalarca sürebiliyor. Bu
+// süre içinde dünkü kelimelerin "bir sonraki tekrar" zamanı geçip due
+// olabiliyor. Yeni kelime öğrenmeyi bitirip gruba katılmaya çalıştığında,
+// artık due olmuş bu kelimeler getGroupNextReviewAt'in "!isDue" filtresi
+// yüzünden GÖRÜNMÜYORDU — hiçbir eşleşme bulunamıyor, yeni kelime kendi
+// bağımsız (dünkülerden farklı) saatine göre planlanıyordu. Sonuç:
+// "günlük 5" grubu ikiye bölünüyor, dünkü/bugünkü kelimelerin tekrarları
+// ayrı ayrı zamanlarda tetikleniyordu (kullanıcının bildirdiği bug —
+// simülasyonla doğrulandı).
+//
+// ÇÖZÜM: kelime döngüye YENİ katılıyorsa (reviewsDone === 0, yani daha hiç
+// tekrar yapmadı), önce bekleyen (due olmamış) bir grup aranır; öyle bir
+// grup yoksa ama halihazırda DUE OLMUŞ (tekrar sırası gelmiş ama henüz
+// cevaplanmamış) bir grup varsa, yeni kelime de HEMEN onlarla aynı due
+// zamana hizalanır — yani o da hemen due olur ve aynı tekrar oturumuna
+// dahil olur. Devam eden turlarda (reviewsDone >= 1) bu fonksiyon
+// KULLANILMAZ; onlar için eski, katı (sadece bekleyenlere bakan) mantık
+// aynen korunur — böylece tur-içi işleme sırasında yanlışlıkla geçmiş/
+// tetikleyici zamana hizalanma riski oluşmaz (regresyon testiyle
+// doğrulandı).
+export const getGroupJoinAnchor = (progress, excludeId) => {
+  const entries = Object.entries(progress).filter(
+    ([id, p]) =>
+      id !== excludeId &&
+      p?.status === STATUS.REVIEW &&
+      !p?.dayDone &&
+      p?.nextReviewAt
+  );
+  if (!entries.length) return null;
+  const waiting = entries.filter(([, p]) => !isDue(p.nextReviewAt));
+  const pool = waiting.length ? waiting : entries; // bekleyen yoksa due olan gruba katıl
+  return Math.min(...pool.map(([, p]) => new Date(p.nextReviewAt).getTime()));
+};
+
+// Döngüsü tamamlanıp (öğrenildi ya da 3 yanlışla ertelendi) şu an
+// "dinlenme"de olan diğer kelimelerin ortak dinlenme bitiş zamanı.
 export const getGroupRestingAt = (progress, excludeId) => {
   const times = Object.entries(progress)
     .filter(
@@ -241,14 +259,23 @@ export const getGroupRestingAt = (progress, excludeId) => {
 };
 
 // Bir kelimenin taze hesaplanmış progress'ini (prog) gruba hizalar:
-//  - hâlâ döngüdeyse (REVIEW && !dayDone) → döngüdeki diğer kelimelerin
-//    ortak "bir sonraki tur" zamanına
+//  - döngüye YENİ katılıyorsa (reviewsDone === 0, öğrenmeden yeni çıktı)
+//    → getGroupJoinAnchor: bekleyen bir grup varsa ona, yoksa hâlihazırda
+//    due olmuş bir gruba (hemen due olacak şekilde) hizalanır. [DÜZELTİLDİ]
+//  - hâlâ döngüdeyse ve devam ediyorsa (REVIEW && !dayDone, reviewsDone>=1)
+//    → döngüdeki diğer kelimelerin ortak "bir sonraki tur" (bekleyen)
+//    zamanına.
 //  - döngüsü yeni bittiyse (dayDone:true) → zaten dinlenen diğer
-//    kelimelerin ortak "dinlenme bitişi" zamanına
+//    kelimelerin ortak "dinlenme bitişi" zamanına.
 // Grupta eşleşen başka kelime yoksa, kelimenin kendi zamanı aynen kalır.
 export const alignToGroup = (prog, progress, wordId) => {
   if (!prog) return prog;
   if (prog.status === STATUS.REVIEW && !prog.dayDone) {
+    if (prog.reviewsDone === 0) {
+      const anchor = getGroupJoinAnchor(progress, wordId);
+      if (anchor == null) return prog;
+      return { ...prog, nextReviewAt: new Date(anchor).toISOString() };
+    }
     const groupTime = getGroupNextReviewAt(progress, wordId);
     if (groupTime == null) return prog;
     return { ...prog, nextReviewAt: new Date(groupTime).toISOString() };
@@ -340,6 +367,7 @@ export default {
   getInFlightReviewCount,
   getBatchInPlayCount,
   getGroupNextReviewAt,
+  getGroupJoinAnchor,
   getGroupRestingAt,
   alignToGroup,
   getNextReviewIn,
