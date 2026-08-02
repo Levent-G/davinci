@@ -361,6 +361,9 @@ export default function LearningSessionScreen({ navigation, route }) {
             const hasWord = sentence
               .toLowerCase()
               .includes(word.word.toLowerCase());
+            // Kelime mutlaka cümlede geçmeli — hem minimum uzunluk hem de
+            // kelimenin kendisi olmadan devam edilemez.
+            const canConfirm = hasMin && hasWord;
             return (
               <View style={s.content}>
                 <Text style={s.writeLabel}>
@@ -412,13 +415,17 @@ export default function LearningSessionScreen({ navigation, route }) {
                     style={[
                       s.confirmBtn,
                       { backgroundColor: st.color },
-                      !hasMin && { opacity: 0.4 },
+                      !canConfirm && { opacity: 0.4 },
                     ]}
-                    onPress={() => hasMin && setSentenceOk(true)}
-                    disabled={!hasMin}
+                    onPress={() => canConfirm && setSentenceOk(true)}
+                    disabled={!canConfirm}
                   >
                     <Text style={s.confirmBtnTxt}>
-                      {hasWord ? "Harika, devam →" : "Yine de devam →"}
+                      {canConfirm
+                        ? "Harika, devam →"
+                        : hasMin
+                        ? `"${word.word}" kelimesini ekle`
+                        : "En az 3 karakter yaz"}
                     </Text>
                   </TouchableOpacity>
                 ) : (
@@ -827,7 +834,7 @@ const s = StyleSheet.create({
   optTxt: { fontSize: FONT_SIZES.md, fontWeight: "600", flex: 1 },
   bottom: {
     position: "absolute",
-    bottom: 30,
+    bottom: 0,
     left: 0,
     right: 0,
     paddingHorizontal: SPACING.lg,

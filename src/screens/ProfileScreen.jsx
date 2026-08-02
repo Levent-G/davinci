@@ -170,11 +170,11 @@ export default function ProfileScreen({ navigation }) {
         </View>
 
         {/* Learning Settings — sadece günlük hedef */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Öğrenme Ayarları</Text>
+        {/* <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Öğrenme Ayarları</Text> */}
 
           {/* Daily Goal */}
-          <View style={[styles.settingCard, styles.settingRow]}>
+          {/* <View style={[styles.settingCard, styles.settingRow]}>
             <View>
               <Text style={styles.settingLabel}>Günlük Hedef</Text>
               <Text style={styles.settingSubLabel}>
@@ -207,7 +207,7 @@ export default function ProfileScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </View> */}
 
         {/* App Settings */}
         <View style={styles.section}>
