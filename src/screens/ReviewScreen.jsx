@@ -25,6 +25,7 @@ import {
   getInFlightReviewCount,
 } from "../utils/davinciAlgorithm";
 import { speakWord } from "../utils/textToSpeech";
+import { hapticSuccess, hapticError } from "../utils/haptics";
 import {
   cancelReviewNotifications,
   scheduleReviewNotification,
@@ -138,6 +139,12 @@ export default function ReviewScreen({ navigation, route }) {
   const handleAnswer = async (opt) => {
     if (quizAnswer || !word) return;
     setQuizAnswer(opt);
+
+    if (opt.isCorrect) {
+      hapticSuccess();
+    } else {
+      hapticError();
+    }
 
     if (!opt.isCorrect) {
       Animated.sequence([

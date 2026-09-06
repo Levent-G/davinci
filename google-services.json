@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "502687781194",
+    "project_id": "davinci-d30bc",
+    "storage_bucket": "davinci-d30bc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:502687781194:android:5eb25a8ef17eec847ab1b3",
+        "android_client_info": {
+          "package_name": "com.davinci.words"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCPlVJKyqh0ibmMVDU0P2jj4OsPVjR0fOo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

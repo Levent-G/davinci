@@ -11,7 +11,6 @@ import LearningSessionScreen from "../screens/LearningSessionScreen";
 import PaywallScreen from "../screens/PaywallScreen";
 import WordDetailScreen from "../screens/WordDetailScreen";
 import AddWordScreen from "../screens/AddWordScreen";
-import QuickScanScreen from "../screens/QuickScanScreen";
 import ReviewScreen from "../screens/ReviewScreen";
 import PreScanScreen from "../screens/PreScanScreen";
 
@@ -53,7 +52,6 @@ export default function RootNavigator() {
             options={{ presentation: "modal" }}
           />
           <Stack.Screen name="WordDetail" component={WordDetailScreen} />
-          <Stack.Screen name="QuickScan" component={QuickScanScreen} />
           <Stack.Screen name="Review" component={ReviewScreen} />
           <Stack.Screen name="PreScan" component={PreScanScreen} />
           <Stack.Screen

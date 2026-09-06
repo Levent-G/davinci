@@ -1,7 +1,17 @@
 // src/context/SubscriptionContext.js
-import React, { createContext, useContext, useReducer, useEffect } from "react";
+import React, { createContext, useContext, useReducer, useEffect, useRef } from "react";
 import { Storage } from "../utils/storage";
 import { saveUser, updateUserSubscription } from "../services/firebase";
+import {
+  configurePurchases,
+  loginPurchases,
+  getCustomerInfo,
+  getOfferings as fetchOfferings,
+  purchasePackage as purchaseRcPackage,
+  restorePurchases as restoreRcPurchases,
+  isEntitled,
+  addCustomerInfoListener,
+} from "../services/purchases";
 
 const SubscriptionContext = createContext(null);
 
@@ -25,6 +35,14 @@ function subReducer(state, action) {
       return { ...state, ...action.payload, isLoading: false };
     case "UPGRADE_PREMIUM":
       return { ...state, plan: "premium", isPremium: true, isLoading: false };
+    case "SET_PREMIUM_FROM_STORE":
+      // RevenueCat, App Store/Play Store'daki GERÇEK abonelik durumunu
+      // bildiriyor — yerel trial mantığından bağımsız, her zaman öncelikli.
+      return action.payload
+        ? { ...state, plan: "premium", isPremium: true }
+        : state.plan === "premium" && !state.isPremiumFromLocalUpgrade
+        ? { ...state, isPremium: false, plan: state.isTrialExpired ? "free" : "trial" }
+        : state;
     case "SET_LOADING":
       return { ...state, isLoading: action.payload };
     default:
@@ -35,6 +53,7 @@ function subReducer(state, action) {
 export function SubscriptionProvider({ children }) {
   const [state, dispatch] = useReducer(subReducer, initialState);
   const [userId, setUserId] = React.useState(null);
+  const listenerCleanupRef = useRef(null);
 
   useEffect(() => {
     async function loadSubscription() {
@@ -83,38 +102,73 @@ export function SubscriptionProvider({ children }) {
             plan: resolvedPlan,
           },
         });
+
+        // RevenueCat'i başlat ve GERÇEK mağaza abonelik durumunu kontrol et.
+        // API anahtarı henüz girilmediyse (bkz. services/purchases.js) bu
+        // no-op olur ve yerel trial/premium mantığı olduğu gibi çalışmaya
+        // devam eder.
+        configurePurchases(profile?.id);
+        if (profile?.id) await loginPurchases(profile.id);
+        const customerInfo = await getCustomerInfo();
+        if (customerInfo) {
+          dispatch({
+            type: "SET_PREMIUM_FROM_STORE",
+            payload: isEntitled(customerInfo),
+          });
+        }
+        listenerCleanupRef.current = addCustomerInfoListener((info) => {
+          dispatch({ type: "SET_PREMIUM_FROM_STORE", payload: isEntitled(info) });
+        });
       } catch (error) {
         console.error("Subscription load error:", error);
         dispatch({ type: "SET_LOADING", payload: false });
       }
     }
     loadSubscription();
+    return () => listenerCleanupRef.current?.();
   }, []);
 
   const actions = {
-    upgradeToPremium: async () => {
-      const updated = {
-        plan: "premium",
-        isPremium: true,
-        upgradedAt: new Date().toISOString(),
-      };
-      dispatch({ type: "UPGRADE_PREMIUM" });
-      await Storage.saveSubscription(updated);
+    // Gerçek mağaza teklifleri (fiyat, süre) — PaywallScreen bunları
+    // gösterip kullanıcının seçtiği paketi actions.purchase'a geçirir.
+    getOfferings: fetchOfferings,
 
-      // Firebase'e kaydet
-      try {
-        const profile = await Storage.getUserProfile();
-        if (profile?.id) {
-          await updateUserSubscription(profile.id, "premium");
-          await saveUser(profile.id, {
-            "subscription.plan": "premium",
-            "subscription.isPremium": true,
-            "subscription.upgradedAt": new Date().toISOString(),
-          });
+    purchase: async (pkg) => {
+      const granted = await purchaseRcPackage(pkg);
+      if (granted) {
+        dispatch({ type: "UPGRADE_PREMIUM" });
+        await Storage.saveSubscription({
+          plan: "premium",
+          isPremium: true,
+          upgradedAt: new Date().toISOString(),
+        });
+        try {
+          if (userId) {
+            await updateUserSubscription(userId, "premium");
+            await saveUser(userId, {
+              "subscription.plan": "premium",
+              "subscription.isPremium": true,
+              "subscription.upgradedAt": new Date().toISOString(),
+            });
+          }
+        } catch (e) {
+          console.warn("Firebase subscription update failed:", e.message);
         }
-      } catch (e) {
-        console.warn("Firebase subscription update failed:", e.message);
       }
+      return granted;
+    },
+
+    restore: async () => {
+      const granted = await restoreRcPurchases();
+      if (granted) {
+        dispatch({ type: "UPGRADE_PREMIUM" });
+        await Storage.saveSubscription({
+          plan: "premium",
+          isPremium: true,
+          restoredAt: new Date().toISOString(),
+        });
+      }
+      return granted;
     },
 
     canLearnWord: (todayCount) => {
@@ -135,14 +189,11 @@ export function SubscriptionProvider({ children }) {
       isExpired: state.isTrialExpired,
     }),
 
-    // ProfileScreen'in "Verileri Sıfırla" aksiyonu Storage.clearAll() ile
-    // subscription kaydını da AsyncStorage'dan siliyor, ama bu context'in
-    // bellekteki state'i (özellikle isPremium) ayrı bir provider'da tutuluyor
-    // ve sıfırlanmadan kalırsa premium bir kullanıcı, verileri sıfırladıktan
-    // sonra bile ProfileScreen'de "Premium Üye" görünmeye devam eder — halbuki
-    // gerçek bir restart'ta Storage boş bulunup taze bir trial oluşturulurdu.
-    // Bu aksiyon aynı "taze trial oluştur" mantığını hemen, restart'a gerek
-    // kalmadan uygular.
+    // ProfileScreen'in "Verileri Sıfırla" aksiyonu yerel trial kaydını
+    // sıfırlar. Kullanıcının GERÇEK bir mağaza aboneliği varsa (RevenueCat),
+    // hemen ardından yapılan customerInfo kontrolü bunu tekrar tespit edip
+    // isPremium'u geri getirir — gerçek bir ödeme bu şekilde iptal edilmiş
+    // olmaz, sadece yerel deneme süresi sayacı sıfırlanır.
     resetSubscription: async () => {
       const now = new Date();
       const trialEnd = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
@@ -162,6 +213,10 @@ export function SubscriptionProvider({ children }) {
           isTrialExpired: false,
         },
       });
+      const customerInfo = await getCustomerInfo();
+      if (customerInfo && isEntitled(customerInfo)) {
+        dispatch({ type: "SET_PREMIUM_FROM_STORE", payload: true });
+      }
     },
   };
 

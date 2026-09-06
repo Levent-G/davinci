@@ -9,12 +9,14 @@ import {
   Animated,
   Dimensions,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
 import { useSubscription } from "../context/SubscriptionContext";
+import { isPurchasesConfigured } from "../services/purchases";
 
 const { width } = Dimensions.get("window");
 
@@ -27,30 +29,30 @@ const FEATURES = [
   { icon: "🔔", text: "Akıllı tekrar hatırlatıcıları", premium: true },
 ];
 
-const PLANS = [
-  {
-    id: "monthly",
-    label: "Aylık",
-    price: "₺99",
-    period: "/ay",
-    savings: null,
-    isPopular: false,
-  },
-  {
-    id: "yearly",
-    label: "Yıllık",
-    price: "₺599",
-    period: "/yıl",
-    savings: "%50 tasarruf",
-    isPopular: true,
-  },
+// RevenueCat'ten teklif çekilemezse (API anahtarı henüz girilmemişse) bu
+// sadece GÖRSEL bir yer tutucudur — bu durumda satın alma butonu devre
+// dışı kalır, sahte bir "premium" verilmez (bkz. handleSubscribe).
+const FALLBACK_PLANS = [
+  { id: "monthly", label: "Aylık", price: "—", period: "/ay", savings: null, isPopular: false },
+  { id: "yearly", label: "Yıllık", price: "—", period: "/yıl", savings: null, isPopular: true },
 ];
+
+function packageLabel(pkg) {
+  const type = pkg.packageType;
+  if (type === "MONTHLY") return "Aylık";
+  if (type === "ANNUAL") return "Yıllık";
+  if (type === "WEEKLY") return "Haftalık";
+  if (type === "LIFETIME") return "Ömür Boyu";
+  return pkg.identifier;
+}
 
 export default function PaywallScreen({ navigation }) {
   const { state: subState, actions: subActions } = useSubscription();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
-  const [selectedPlan, setSelectedPlan] = React.useState("yearly");
+  const [offeringPackages, setOfferingPackages] = React.useState(null); // null = yüklenmedi, [] = teklif yok
+  const [selectedPkg, setSelectedPkg] = React.useState(null);
+  const [purchasing, setPurchasing] = React.useState(false);
 
   useEffect(() => {
     Animated.parallel([
@@ -68,36 +70,84 @@ export default function PaywallScreen({ navigation }) {
     ]).start();
   }, []);
 
+  useEffect(() => {
+    (async () => {
+      const offering = await subActions.getOfferings();
+      const pkgs = offering?.availablePackages || [];
+      setOfferingPackages(pkgs);
+      const annual = pkgs.find((p) => p.packageType === "ANNUAL");
+      setSelectedPkg(annual || pkgs[0] || null);
+    })();
+  }, []);
+
+  const plans = offeringPackages?.length
+    ? offeringPackages.map((pkg) => ({
+        id: pkg.identifier,
+        label: packageLabel(pkg),
+        price: pkg.product.priceString,
+        period: pkg.packageType === "MONTHLY" ? "/ay" : pkg.packageType === "ANNUAL" ? "/yıl" : "",
+        savings: pkg.packageType === "ANNUAL" ? "En avantajlı" : null,
+        isPopular: pkg.packageType === "ANNUAL",
+        pkg,
+      }))
+    : FALLBACK_PLANS;
+
+  const canPurchase = isPurchasesConfigured() && !!selectedPkg;
+
   const handleSubscribe = () => {
-    // Gerçek ödeme entegrasyonu için buraya RevenueCat veya Stripe eklenebilir
+    if (!canPurchase) {
+      Alert.alert(
+        "Satın Alma Şu An Kullanılamıyor",
+        "Abonelik sistemi henüz mağaza tarafında yapılandırılmadı. Lütfen daha sonra tekrar deneyin."
+      );
+      return;
+    }
+    const plan = plans.find((p) => p.pkg === selectedPkg);
     Alert.alert(
       "Premium'a Geç",
-      `${
-        selectedPlan === "monthly" ? "Aylık ₺99" : "Yıllık ₺599"
+      `${plan?.label || ""} ${plan?.price || ""}${
+        plan?.period || ""
       } planına abone olmak istediğinden emin misin?`,
       [
         { text: "İptal", style: "cancel" },
         {
           text: "Devam Et",
           onPress: async () => {
-            await subActions.upgradeToPremium();
-            Alert.alert(
-              "Premium Aktif!",
-              "Premium uyeligin aktif edildi. Sinırsiz ogrenmenin tadini cikar!",
-              [{ text: "Harika!", onPress: () => navigation.goBack() }]
-            );
+            setPurchasing(true);
+            try {
+              const granted = await subActions.purchase(selectedPkg);
+              if (granted) {
+                Alert.alert(
+                  "Premium Aktif!",
+                  "Premium üyeliğin aktif edildi. Sınırsız öğrenmenin tadını çıkar!",
+                  [{ text: "Harika!", onPress: () => navigation.goBack() }]
+                );
+              }
+            } catch (e) {
+              if (!e?.userCancelled) {
+                Alert.alert("Satın Alma Başarısız", e?.message || "Bir şeyler ters gitti.");
+              }
+            } finally {
+              setPurchasing(false);
+            }
           },
         },
       ]
     );
   };
 
-  const handleRestore = () => {
-    Alert.alert(
-      "Satın Alımı Geri Yükle",
-      "Önceki satın alımlarınız kontrol ediliyor...",
-      [{ text: "Tamam" }]
-    );
+  const handleRestore = async () => {
+    try {
+      const granted = await subActions.restore();
+      Alert.alert(
+        granted ? "Geri Yüklendi!" : "Satın Alım Bulunamadı",
+        granted
+          ? "Premium üyeliğin geri yüklendi."
+          : "Bu hesaba bağlı aktif bir satın alım bulunamadı."
+      );
+    } catch (e) {
+      Alert.alert("Hata", e?.message || "Geri yükleme sırasında bir sorun oluştu.");
+    }
   };
 
   return (
@@ -157,66 +207,81 @@ export default function PaywallScreen({ navigation }) {
         {/* Plans */}
         <Animated.View style={[styles.plansSection, { opacity: fadeAnim }]}>
           <Text style={styles.plansTitle}>Plan Seç</Text>
-          {PLANS.map((plan) => (
-            <TouchableOpacity
-              key={plan.id}
-              style={[
-                styles.planCard,
-                selectedPlan === plan.id && styles.planCardSelected,
-                plan.isPopular && styles.planCardPopular,
-              ]}
-              onPress={() => setSelectedPlan(plan.id)}
-              activeOpacity={0.85}
-            >
-              {plan.isPopular && (
-                <View style={styles.popularBadge}>
-                  <Text style={styles.popularBadgeText}>En Çok Seçilen</Text>
-                </View>
-              )}
-              <View style={styles.planRow}>
-                <View
-                  style={[
-                    styles.planRadio,
-                    selectedPlan === plan.id && styles.planRadioSelected,
-                  ]}
-                >
-                  {selectedPlan === plan.id && (
-                    <View style={styles.planRadioDot} />
-                  )}
-                </View>
-                <View style={styles.planInfo}>
-                  <Text style={styles.planLabel}>{plan.label}</Text>
-                  {plan.savings && (
-                    <Text style={styles.planSavings}>{plan.savings}</Text>
-                  )}
-                </View>
-                <View style={styles.planPriceCol}>
-                  <Text
+          {offeringPackages === null ? (
+            <ActivityIndicator color={COLORS.accent} style={{ marginVertical: SPACING.lg }} />
+          ) : (
+            plans.map((plan) => (
+              <TouchableOpacity
+                key={plan.id}
+                style={[
+                  styles.planCard,
+                  selectedPkg === plan.pkg && styles.planCardSelected,
+                  plan.isPopular && styles.planCardPopular,
+                ]}
+                onPress={() => plan.pkg && setSelectedPkg(plan.pkg)}
+                activeOpacity={0.85}
+                disabled={!plan.pkg}
+              >
+                {plan.isPopular && (
+                  <View style={styles.popularBadge}>
+                    <Text style={styles.popularBadgeText}>En Çok Seçilen</Text>
+                  </View>
+                )}
+                <View style={styles.planRow}>
+                  <View
                     style={[
-                      styles.planPrice,
-                      selectedPlan === plan.id && { color: COLORS.accent },
+                      styles.planRadio,
+                      selectedPkg === plan.pkg && styles.planRadioSelected,
                     ]}
                   >
-                    {plan.price}
-                  </Text>
-                  <Text style={styles.planPeriod}>{plan.period}</Text>
+                    {selectedPkg === plan.pkg && (
+                      <View style={styles.planRadioDot} />
+                    )}
+                  </View>
+                  <View style={styles.planInfo}>
+                    <Text style={styles.planLabel}>{plan.label}</Text>
+                    {plan.savings && (
+                      <Text style={styles.planSavings}>{plan.savings}</Text>
+                    )}
+                  </View>
+                  <View style={styles.planPriceCol}>
+                    <Text
+                      style={[
+                        styles.planPrice,
+                        selectedPkg === plan.pkg && { color: COLORS.accent },
+                      ]}
+                    >
+                      {plan.price}
+                    </Text>
+                    <Text style={styles.planPeriod}>{plan.period}</Text>
+                  </View>
                 </View>
-              </View>
-            </TouchableOpacity>
-          ))}
+              </TouchableOpacity>
+            ))
+          )}
+          {offeringPackages?.length === 0 && (
+            <Text style={styles.finePrint}>
+              Şu an aktif bir abonelik planı bulunamadı. Lütfen daha sonra tekrar dene.
+            </Text>
+          )}
         </Animated.View>
 
         {/* Subscribe Button */}
         <TouchableOpacity
-          style={styles.subscribeButton}
+          style={[styles.subscribeButton, (!canPurchase || purchasing) && { opacity: 0.5 }]}
           onPress={handleSubscribe}
           activeOpacity={0.9}
+          disabled={purchasing}
         >
           <LinearGradient
             colors={[COLORS.accent, COLORS.accentDark]}
             style={styles.subscribeGradient}
           >
-            <Text style={styles.subscribeText}>Premium'a Geç →</Text>
+            {purchasing ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.subscribeText}>Premium'a Geç →</Text>
+            )}
           </LinearGradient>
         </TouchableOpacity>
 

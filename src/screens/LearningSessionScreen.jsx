@@ -31,6 +31,7 @@ import {
 } from "../utils/davinciAlgorithm";
 import { useApp } from "../context/AppContext";
 import { speakWord } from "../utils/textToSpeech";
+import { hapticSuccess, hapticError } from "../utils/haptics";
 import { markCompleted } from "../utils/sessionBridge";
 import { scheduleAllReviews } from "../utils/notifications";
 
@@ -166,6 +167,11 @@ export default function LearningSessionScreen({ navigation, route }) {
   const handleQuizAnswer = (opt) => {
     if (quizAnswer) return;
     setQuizAnswer(opt);
+    if (opt.isCorrect) {
+      hapticSuccess();
+    } else {
+      hapticError();
+    }
     if (!opt.isCorrect) {
       Animated.sequence([
         Animated.timing(shakeAnim, {

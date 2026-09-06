@@ -10,6 +10,7 @@ import {
   Alert,
   TextInput,
   Modal,
+  Linking,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -238,6 +239,30 @@ export default function ProfileScreen({ navigation }) {
             value={settings.hapticEnabled}
             onToggle={(v) => handleUpdateSetting("hapticEnabled", v)}
           />
+        </View>
+
+        {/* Yasal */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.linkRow}
+            onPress={() =>
+              Linking.openURL(
+                "https://claude.ai/code/artifact/2c0f8766-02a4-45df-9003-905e73080ad9"
+              )
+            }
+          >
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={18}
+              color={COLORS.textSecondary}
+            />
+            <Text style={styles.linkRowText}>Gizlilik Politikası</Text>
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={COLORS.textMuted}
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Danger Zone */}
@@ -500,6 +525,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  linkRowText: {
+    flex: 1,
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.md,
+    fontWeight: "600",
+  },
   dangerButton: {
     flexDirection: "row",
     alignItems: "center",

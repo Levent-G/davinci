@@ -22,6 +22,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import { speakWord } from "../utils/textToSpeech";
+import { hapticLight } from "../utils/haptics";
 import { STATUS, DAILY_TARGET, getNewWords } from "../utils/davinciAlgorithm";
 import { wasCompleted } from "../utils/sessionBridge";
 
@@ -153,6 +154,7 @@ export default function PreScanScreen({ navigation, route }) {
   const doKnow = () => {
     const word = pool[cardIdxRef.current];
     if (!word) return;
+    hapticLight();
     const prevStatus = state.wordProgress[word.id]?.status;
     actions.updateWordProgress(word.id, {
       ...(state.wordProgress[word.id] || {}),
@@ -175,6 +177,7 @@ export default function PreScanScreen({ navigation, route }) {
   const doDontKnow = () => {
     const word = pool[cardIdxRef.current];
     if (!word) return;
+    hapticLight();
     actions.updateWordProgress(word.id, {
       ...(state.wordProgress[word.id] || {}),
       status: STATUS.LEARNING,
