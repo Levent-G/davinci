@@ -8,13 +8,13 @@ export const STATUS = {
 };
 export const WORD_STATUS = STATUS;
 
-// GERÇEK DEĞERLER — test modu kapatıldı.
-// Tekrarlar artık 1 saatte 1 (HOUR), gün geçişi 24 saatte 1 (DAY).
+// GERÇEK DEĞERLER — tekrar aralığı 2 saatte 1 (HOUR adı korunuyor ama
+// değeri 2 saat), gün geçişi 24 saatte 1 (DAY).
 // Bu iki sabit HOUR/DAY tüm ekranlarda (LearningSessionScreen,
 // ReviewScreen, notifications) TEK kaynaktan (buradan) import edilip
 // kullanılıyor — başka hiçbir dosyada ayrıca tanımlı değil, bu yüzden
 // senkron bozulma riski yok.
-export const HOUR = 60 * 60 * 1000;
+export const HOUR = 2 * 60 * 60 * 1000;
 export const DAY = 24 * 60 * 60 * 1000;
 
 // Günlük hedef: bir günde tamamlanması gereken kelime sayısı
@@ -33,7 +33,7 @@ export const isDueForReview = (p) => isDue(p?.nextReviewAt);
 const touchedToday = (p) => isToday(p?.startedAt) || isToday(p?.updatedAt);
 
 // ─── 5 AŞAMA BİTTİ ───────────────────────────────────────
-// Kelime learning → review, ilk tekrar 1 saat sonra
+// Kelime learning → review, ilk tekrar HOUR sonra (bkz. üstteki sabit)
 export const afterLearning = (prog) => ({
   ...prog,
   status: STATUS.REVIEW,
@@ -78,7 +78,7 @@ export const afterQuiz = (prog, isCorrect) => {
     };
   }
 
-  // Devam — bir sonraki tekrar 1 saat sonra
+  // Devam — bir sonraki tekrar HOUR sonra
   return {
     ...prog,
     status: STATUS.REVIEW,
@@ -103,11 +103,18 @@ export const quizOptions = generateQuizOptions;
 
 // ─── SORGULAR ────────────────────────────────────────────
 
-// Tekrar zamanı gelmiş kelimeler
+// Tekrar zamanı gelmiş kelimeler.
+// Döngü içindeyken (dayDone: false) 2 saatlik tur bekleme süresi hâlâ
+// saate göre (isDue). Ama döngüsü bitip "dinlenmeye" geçmiş (dayDone:
+// true, örn. 3 yanlışla ertelenmiş) bir kelime için artık 24 saat
+// SAYMIYORUZ — takvim günü değiştiği an (gece yarısı geçince, ne kadar
+// saat geçmiş olursa olsun) tekrar hazır sayılıyor. Bkz. getRestingCount.
 export const getReviewWords = (allWords, progress) =>
   allWords.filter((w) => {
     const p = progress[w.id];
-    return p?.status === STATUS.REVIEW && isDue(p.nextReviewAt);
+    if (p?.status !== STATUS.REVIEW) return false;
+    if (p?.dayDone) return !isToday(p.updatedAt);
+    return isDue(p.nextReviewAt);
   });
 export const getTodayReviewWords = getReviewWords;
 
@@ -144,12 +151,15 @@ export const getWaitingReviewCount = (progress) =>
   ).length;
 
 // Döngüsü tamamlanıp (öğrenildi ya da 3 yanlışla ertelendi) şu an
-// "dinlenme" süresinde olan (henüz tekrar zamanı gelmemiş) kelime sayısı
+// "dinlenme" süresinde olan kelime sayısı. TAKVİM GÜNÜNE göre: kelime
+// tamamlandığı takvim günü içindeyse hâlâ dinleniyor sayılır; takvim
+// günü değiştiği an (gece yarısı geçince) dinlenmesi biter — 24 saat
+// dolmasını beklemeye gerek yok.
 export const getRestingCount = (progress) =>
   Object.values(progress).filter(
     (p) =>
       p?.dayDone &&
-      !isDue(p?.nextReviewAt) &&
+      isToday(p?.updatedAt) &&
       (p?.status === STATUS.REVIEW || p?.status === STATUS.LEARNED)
   ).length;
 
@@ -251,7 +261,7 @@ export const getGroupRestingAt = (progress, excludeId) => {
         id !== excludeId &&
         p?.dayDone &&
         p?.nextReviewAt &&
-        !isDue(p.nextReviewAt) &&
+        isToday(p.updatedAt) &&
         (p?.status === STATUS.REVIEW || p?.status === STATUS.LEARNED)
     )
     .map(([, p]) => new Date(p.nextReviewAt).getTime());
@@ -340,7 +350,25 @@ export const getMasteryLevel = (p) => {
 };
 export const getMasteryLabel = (l) =>
   ["Yeni", "Başlangıç", "Gelişiyor", "İyi", "Çok İyi", "Uzman"][Math.min(l, 5)];
-export const calculateStreak = () => 0;
+
+// Kaç gündür arka arkaya kelime öğrenilmiş (bugün dahil, geriye doğru
+// kesintisiz sayılır). stats.dailyStats her günün wordsLearned sayısını
+// tutar — bugünden geriye doğru gidip ilk boş/0 günde durur.
+// NOT: Daha önce burası hatalı şekilde `() => 0` olarak sabitlenmişti
+// (bir test/debug denemesinin kalıntısı), bu yüzden streak özelliği
+// tamamen kırıktı — hiçbir zaman 0'ın üstüne çıkmıyordu.
+export const calculateStreak = (stats) => {
+  if (!stats?.dailyStats) return 0;
+  let streak = 0;
+  const today = new Date();
+  for (let i = 0; i < 365; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    if (stats.dailyStats[d.toDateString()]?.wordsLearned > 0) streak++;
+    else if (i > 0) break;
+  }
+  return streak;
+};
 
 export default {
   STATUS,

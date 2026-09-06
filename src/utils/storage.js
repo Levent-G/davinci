@@ -51,18 +51,29 @@ export const Storage = {
     }
   },
 
+  // NOT (RACE CONDITION DÜZELTMESİ): bu fonksiyon "oku → değiştir → yaz"
+  // yapıyor. Farklı kelimeler için art arda (await'siz) çağrılırsa, ikinci
+  // çağrının okuması birincinin yazması bitmeden başlayabilir ve birinci
+  // güncelleme AsyncStorage'a hiç yazılmadan kaybolabilir (uygulama kapanıp
+  // açıldığında o kelimenin ilerlemesi geri gelmez). Bunu önlemek için tüm
+  // çağrılar tek bir kuyrukta sıraya koyulup birbiri ardına çalıştırılıyor.
+  _writeQueue: Promise.resolve(),
   async updateSingleWordProgress(wordId, update) {
-    try {
-      const all = await Storage.getWordProgress();
-      all[wordId] = {
-        ...(all[wordId] || {}),
-        ...update,
-        updatedAt: new Date().toISOString(),
-      };
-      return Storage.saveWordProgress(all);
-    } catch {
-      return false;
-    }
+    const run = async () => {
+      try {
+        const all = await Storage.getWordProgress();
+        all[wordId] = {
+          ...(all[wordId] || {}),
+          ...update,
+          updatedAt: new Date().toISOString(),
+        };
+        return Storage.saveWordProgress(all);
+      } catch {
+        return false;
+      }
+    };
+    Storage._writeQueue = Storage._writeQueue.then(run, run);
+    return Storage._writeQueue;
   },
 
   // Özel kelimeler

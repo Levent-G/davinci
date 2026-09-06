@@ -26,7 +26,7 @@ import {
 } from "../utils/davinciAlgorithm";
 import { speakWord } from "../utils/textToSpeech";
 import {
-  cancelAllNotifications,
+  cancelReviewNotifications,
   scheduleReviewNotification,
 } from "../utils/notifications";
 
@@ -63,7 +63,17 @@ export default function ReviewScreen({ navigation, route }) {
     if (!word) return;
     setQuizAnswer(null);
     setQuizOpts(generateQuizOptions(word, allWords));
-    loadImage(word.word);
+    // Öğrenme aşamasında kullanıcı fotoğrafı yenilediyse, o seçim
+    // kelimenin ilerleme kaydına yazılmıştır — burada da aynısını
+    // gösteriyoruz (yeniden Pexels sorgusu atıp farklı/ilk sonucu
+    // göstermek yerine).
+    const savedPhoto = state.wordProgress[word.id]?.photoUri;
+    if (savedPhoto) {
+      setImageUri(savedPhoto);
+      setImgLoading(false);
+    } else {
+      loadImage(word.word);
+    }
     Animated.sequence([
       Animated.timing(fadeAnim, {
         toValue: 0,
@@ -83,7 +93,9 @@ export default function ReviewScreen({ navigation, route }) {
     if (!done || !results.length) return;
     (async () => {
       try {
-        await cancelAllNotifications();
+        // SADECE tekrar bildirimlerini iptal et — günlük hatırlatıcıyı
+        // (kullanıcının Profil'de ayarladığı) etkileme (bkz. notifications.js).
+        await cancelReviewNotifications();
         const progress = latestProgressRef.current;
         const pendingCount = getInFlightReviewCount(progress);
         if (pendingCount <= 0) return; // döngü tamamen bitti (yarına ertelendi ya da öğrenildi)
@@ -174,13 +186,30 @@ export default function ReviewScreen({ navigation, route }) {
       };
     } catch {}
 
+    // DÜZELTME: Bir kelime tekrar döngüsünü bitirip STATUS.LEARNED'a
+    // geçtiğinde recordWordLearned() hiçbir yerden çağrılmıyordu — bu
+    // yüzden StatsScreen'in "Öğrenilen" KPI'ı ve haftalık/aylık grafiği,
+    // wordProgress'e göre gerçekten öğrenilmiş kelimeleri hiç saymıyordu.
+    // prog.status !== LEARNED kontrolü: bu geçiş sadece REVIEW → LEARNED
+    // olduğunda bir kez tetiklenir (getReviewWords zaten LEARNED olmuş
+    // kelimeleri tekrar havuzuna hiç sokmuyor).
+    if (newProg.status === STATUS.LEARNED && prog.status !== STATUS.LEARNED) {
+      actions.recordWordLearned();
+    }
+
     const newResults = [...results, { word, correct: opt.isCorrect }];
     setResults(newResults);
 
     setTimeout(() => {
       shakeAnim.setValue(0);
-      if (idx >= words.length - 1) setDone(true);
-      else setIdx((i) => i + 1);
+      if (idx >= words.length - 1) {
+        setDone(true);
+        // DÜZELTME: recordSessionComplete hiçbir yerden çağrılmıyordu —
+        // "Oturum" KPI'ı ve totalSessions her zaman 0 kalıyordu. Kelime
+        // sayısı burada 0 veriyoruz çünkü öğrenilenler yukarıda tek tek
+        // recordWordLearned() ile zaten sayıldı (çift sayım olmasın diye).
+        actions.recordSessionComplete(0);
+      } else setIdx((i) => i + 1);
     }, 1500);
   };
 
@@ -207,7 +236,9 @@ export default function ReviewScreen({ navigation, route }) {
       callMessage = "Tebrikler! Tüm kelimeler öğrenildi! 🎉";
     } else if (stillPendingToday) {
       callMessage =
-        "Da Vinci sizi tekrar çağıracak\n1 saat sonra tekrar zamanı!";
+        `Da Vinci sizi tekrar çağıracak\n${
+          HOUR / (60 * 60 * 1000)
+        } saat sonra tekrar zamanı!`;
     } else if (deferredToTomorrow) {
       callMessage =
         "Bazı kelimeler yarın tekrar karşına çıkacak.\nYarın devam edebilirsin.";
@@ -308,7 +339,7 @@ export default function ReviewScreen({ navigation, route }) {
             <Image
               source={{ uri: imageUri }}
               style={s.image}
-              resizeMode="cover"
+              resizeMode="contain"
             />
           ) : (
             <View style={s.imgPH}>
@@ -457,7 +488,11 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.xl,
     overflow: "hidden",
   },
-  image: { width: "100%", height: 220 },
+  image: {
+    width: "100%",
+    height: 340,
+    backgroundColor: COLORS.backgroundCard,
+  },
   imgPH: {
     height: 160,
     backgroundColor: COLORS.backgroundCard,

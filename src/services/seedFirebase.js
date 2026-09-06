@@ -3,7 +3,7 @@
 // VEYA doğrudan Node.js ile çalıştır: node seedFirebase.js
 
 import firestore from '@react-native-firebase/firestore';
-import ALL_WORDS from '../data/wordDatabase';
+import { ALL_WORDS } from '../data/wordDatabase';
 
 export const seedWordsToFirebase = async (onProgress) => {
   const BATCH_SIZE = 499; // Firestore max 500

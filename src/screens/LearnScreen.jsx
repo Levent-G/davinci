@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -34,7 +34,7 @@ const LEVEL_COLORS = {
   C2: "#E17055",
 };
 
-export default function LearnScreen({ navigation }) {
+export default function LearnScreen({ navigation, route }) {
   const { state, actions } = useApp();
   const [selectedLevel, setSelectedLevel] = useState("A1");
   const [tick, setTick] = useState(0);
@@ -46,6 +46,15 @@ export default function LearnScreen({ navigation }) {
       return () => clearInterval(iv);
     }, [])
   );
+
+  // HomeScreen "Learn" tab'ına navigate("Learn", { level }) ile bir seviye
+  // önerisiyle yönlendirebiliyor (örn. tercih edilen seviye ya da
+  // "Seviyeler" gridindeki bir seviye kartı). Tab navigator ekranı
+  // unmount etmediği için bu route.params değişikliği daha önce hiç
+  // okunmuyordu — kullanıcı her zaman A1'de kalıyordu.
+  useEffect(() => {
+    if (route?.params?.level) setSelectedLevel(route.params.level);
+  }, [route?.params?.level]);
 
   const allWords = actions.getAllWords();
   const wp = state.wordProgress;

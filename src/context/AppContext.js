@@ -10,10 +10,10 @@ import React, {
   useEffect,
   useRef,
 } from "react";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 import { Storage } from "../utils/storage";
 import { ALL_WORDS } from "../data/wordDatabase";
-import { calculateStreak } from "../utils/davinciAlgorithm";
+import { calculateStreak, STATUS } from "../utils/davinciAlgorithm";
 import {
   saveUser,
   saveSession,
@@ -93,6 +93,16 @@ function appReducer(state, action) {
         ...state,
         dailyWordCount: state.dailyWordCount + (action.payload || 1),
       };
+    // DÜZELTME: ProfileScreen'in "Verileri Sıfırla" aksiyonu eskiden sadece
+    // Storage.clearAll() çağırıyordu — AsyncStorage temizleniyordu ama
+    // AppContext'in bellekteki state'i (wordProgress, stats, customWords,
+    // user, isOnboardingDone...) hiç sıfırlanmıyordu. Kullanıcı "Sıfırlandı"
+    // mesajını görüp uygulamada gezinmeye devam ettiğinde tüm eski verileri
+    // (öğrenilen kelimeler, istatistikler) görmeye devam ediyordu — uygulamayı
+    // manuel kapatıp yeniden açana kadar. Bu aksiyon in-memory state'i de
+    // gerçek bir restart'ta ne olacaksa (initialState) aynısına döndürür.
+    case "RESET_STATE":
+      return { ...initialState, isLoading: false };
     default:
       return state;
   }
@@ -189,6 +199,10 @@ export function AppProvider({ children }) {
 
   const actions = {
     setUser: async (profile) => {
+      // Sadece ilk profil oluşturmada (onboarding, henüz state.user yokken)
+      // yeni kullanıcı sayılır. state.user zaten varsa bu bir GÜNCELLEME
+      // (ör. isim değişikliği) demektir.
+      const isNewUser = !state.user;
       const userId = profile.id || `user_${Date.now()}`;
       const profileWithId = { ...profile, id: userId };
 
@@ -197,20 +211,43 @@ export function AppProvider({ children }) {
 
       // Firebase'e kaydet
       try {
-        await saveUser(userId, {
-          ...profileWithId,
-          createdAt: new Date().toISOString(),
+        // "settings" alanını profileWithId'den ayrı tutuyoruz: state.user
+        // içindeki settings, onboarding'den beri güncellenmemiş ESKİ bir
+        // kopya olabilir (asıl güncel ayarlar state.settings'te tutuluyor ve
+        // Firestore'a actions.updateSettings ile ayrıca senkronize ediliyor).
+        // Bunu her setUser çağrısında (ör. sadece isim değişikliğinde) da
+        // gönderirsek, updateSettings'in daha önce Firestore'a yazdığı güncel
+        // ayarları eski değerlerle EZERİZ (admin panelde kullanıcı ayarları
+        // yanlış görünür). Yeni kullanıcıda ise henüz başka bir kaynak
+        // settings'i yazmadığı için ilk kez burada gönderilmesi doğru.
+        const { settings: profileSettings, ...profileWithoutSettings } =
+          profileWithId;
+        const firebasePayload = {
+          ...profileWithoutSettings,
           lastActiveAt: new Date(),
-          platform: "android",
-          subscription: {
+          platform: Platform.OS,
+        };
+        if (isNewUser && profileSettings) {
+          firebasePayload.settings = profileSettings;
+        }
+        // KRİTİK: subscription/createdAt SADECE yeni kullanıcı oluşturulurken
+        // yazılmalı. Eskiden her setUser çağrısında (ör. isim güncelleme)
+        // subscription nesnesinin tamamı tekrar yazılıyordu — Firestore'da
+        // merge:true, iç içe map alanlarını (subscription gibi) tamamen
+        // DEĞİŞTİRİR (birleştirmez). Bu yüzden premium bir kullanıcı sadece
+        // ismini değiştirse bile aboneliği "trial"a resetleniyordu.
+        if (isNewUser) {
+          firebasePayload.createdAt = new Date().toISOString();
+          firebasePayload.subscription = {
             plan: "trial",
             trialStartDate: new Date().toISOString(),
             trialEndsDate: new Date(
               Date.now() + 7 * 24 * 60 * 60 * 1000
             ).toISOString(),
             isPremium: false,
-          },
-        });
+          };
+        }
+        await saveUser(userId, firebasePayload);
       } catch (e) {
         console.warn("Firebase saveUser failed, using local only:", e.message);
       }
@@ -351,6 +388,15 @@ export function AppProvider({ children }) {
 
     // Firebase kelimelerini yenile
     refreshFirestoreWords: loadFirestoreWords,
+
+    // Tüm yerel veriyi sil ve bellekteki state'i de sıfırla (bkz. RESET_STATE
+    // yorumu) — böylece kullanıcı "Sıfırlandı" dedikten hemen sonra, uygulamayı
+    // yeniden başlatmaya gerek kalmadan onboarding'e döner ve eski
+    // istatistik/ilerleme verisi hiçbir ekranda artık görünmez.
+    resetAllData: async () => {
+      await Storage.clearAll();
+      dispatch({ type: "RESET_STATE" });
+    },
   };
 
   return (

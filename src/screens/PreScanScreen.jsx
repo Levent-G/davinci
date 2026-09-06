@@ -59,13 +59,16 @@ export default function PreScanScreen({ navigation, route }) {
   const isFirstFocus = useRef(true);
 
   const [displayIdx, setDisplayIdx] = useState(0);
-  const [imageUri, setImageUri] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [photoIdx, setPhotoIdx] = useState(0);
+  const [photoRefreshed, setPhotoRefreshed] = useState(false);
   const [imgLoading, setImgLoading] = useState(false);
+  const imageUri = photos[photoIdx]?.src?.medium || null;
 
   const pan = useRef(new Animated.ValueXY()).current;
 
   const loadImage = useCallback(async (word) => {
-    setImageUri(null);
+    setPhotos([]);
     setImgLoading(true);
     try {
       const res = await fetch(
@@ -75,16 +78,27 @@ export default function PreScanScreen({ navigation, route }) {
         { headers: { Authorization: PEXELS_KEY } }
       );
       const data = await res.json();
-      if (data.photos?.length > 0) setImageUri(data.photos[0].src.medium);
+      if (data.photos?.length > 0) setPhotos(data.photos);
     } catch {
     } finally {
       setImgLoading(false);
     }
   }, []);
 
+  // Kart her değiştiğinde (yeni kelime) fotoğraf yenileme hakkı sıfırlanır.
+  const refreshPhoto = () => {
+    if (photoRefreshed || photos.length < 2) return;
+    setPhotoIdx(1);
+    setPhotoRefreshed(true);
+  };
+
   useEffect(() => {
     const word = pool[displayIdx];
-    if (word) loadImage(word.word);
+    if (word) {
+      setPhotoIdx(0);
+      setPhotoRefreshed(false);
+      loadImage(word.word);
+    }
   }, [displayIdx]);
 
   // LearningSession'dan dönünce
@@ -106,7 +120,14 @@ export default function PreScanScreen({ navigation, route }) {
         setSessionCount(newCount);
 
         if (newCount >= SESSION_TARGET) {
-          // Günün 5 kelimelik hedefi tamamlandı
+          // Günün 5 kelimelik hedefi tamamlandı.
+          // DÜZELTME: actions.recordSessionComplete hiçbir yerde
+          // çağrılmıyordu — bu yüzden StatsScreen'deki "Oturum" KPI'ı ve
+          // haftalık/aylık grafik her zaman boş kalıyordu, gerçek kullanım
+          // hiç yansımıyordu. wordsLearned=0 veriyoruz çünkü öğrenilen
+          // kelime sayısı zaten doKnow() içinde recordWordLearned() ile
+          // tek tek sayılıyor — burada tekrar eklersek çift sayım olur.
+          actions.recordSessionComplete(0);
           navigation.navigate("MainTabs", { screen: "Learn" });
           return;
         }
@@ -132,11 +153,22 @@ export default function PreScanScreen({ navigation, route }) {
   const doKnow = () => {
     const word = pool[cardIdxRef.current];
     if (!word) return;
+    const prevStatus = state.wordProgress[word.id]?.status;
     actions.updateWordProgress(word.id, {
       ...(state.wordProgress[word.id] || {}),
       status: STATUS.KNOWN,
       knownAt: new Date().toISOString(),
     });
+    // DÜZELTME: "Biliyorum" ile işaretlenen kelime StatsScreen/HomeScreen
+    // tanımına göre (status KNOWN/LEARNED) hemen öğrenilmiş sayılır, ama
+    // stats.totalWordsLearned/dailyStats bunu hiç bilmiyordu çünkü
+    // recordWordLearned burada hiç çağrılmıyordu (tek çağrı noktası,
+    // navigasyonda ULAŞILAMAYAN QuickScanScreen'deydi). pool zaten sadece
+    // "new" kelimelerden oluştuğu için prevStatus kontrolü bir güvenlik
+    // önlemi.
+    if (prevStatus !== STATUS.KNOWN && prevStatus !== STATUS.LEARNED) {
+      actions.recordWordLearned();
+    }
     cardIdxRef.current += 1;
   };
 
@@ -286,11 +318,24 @@ export default function PreScanScreen({ navigation, route }) {
           {...panResponder.panHandlers}
         >
           {imageUri ? (
-            <Image
-              source={{ uri: imageUri }}
-              style={s.cardImg}
-              resizeMode="cover"
-            />
+            <>
+              <Image
+                source={{ uri: imageUri }}
+                style={s.cardImg}
+                resizeMode="contain"
+              />
+              {!photoRefreshed && photos.length > 1 && (
+                <TouchableOpacity
+                  style={[s.refreshBtn, { borderColor: color + "60" }]}
+                  onPress={refreshPhoto}
+                >
+                  <Ionicons name="refresh" size={14} color={color} />
+                  <Text style={[s.refreshBtnTxt, { color }]}>
+                    Farklı fotoğraf
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </>
           ) : imgLoading ? (
             <View style={s.cardImgPH}>
               <ActivityIndicator color={color} />
@@ -429,7 +474,25 @@ const s = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 10,
   },
-  cardImg: { width: "100%", height: 280, borderRadius: 20, marginBottom: 4 },
+  cardImg: {
+    width: "100%",
+    height: 300,
+    borderRadius: 20,
+    marginBottom: 4,
+    backgroundColor: COLORS.background,
+  },
+  refreshBtn: {
+    flexDirection: "row",
+    alignSelf: "center",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+  },
+  refreshBtnTxt: { fontSize: FONT_SIZES.xs, fontWeight: "600" },
   cardImgPH: {
     width: "100%",
     height: 100,

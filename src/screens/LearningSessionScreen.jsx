@@ -11,17 +11,23 @@ import {
   Image,
   ActivityIndicator,
   Dimensions,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import {
   STATUS,
   HOUR,
+  DAILY_TARGET,
   generateQuizOptions,
   afterLearning,
   alignToGroup,
   getInFlightReviewCount,
+  getBatchInPlayCount,
 } from "../utils/davinciAlgorithm";
 import { useApp } from "../context/AppContext";
 import { speakWord } from "../utils/textToSpeech";
@@ -43,6 +49,16 @@ export default function LearningSessionScreen({ navigation, route }) {
   const { word, level = "A1" } = route.params || {};
   const { state, actions } = useApp();
   const allWords = actions.getAllWords();
+  const insets = useSafeAreaInsets();
+  // Android'in alt gezinme çubuğu (3 tuş ya da jest çubuğu) edge-to-edge
+  // modda içeriğin üstüne biner — SafeAreaView'ın otomatik padding'i her
+  // cihazda güvenilir olmadığı için (aynı sorun MainTabNavigator'da da
+  // yaşanmıştı) burada da insets manuel ekleniyor.
+  const safeBottom = Platform.select({
+    ios: Math.max(insets.bottom, 20),
+    android: Math.max(insets.bottom, 16),
+    default: Math.max(insets.bottom, 16),
+  });
 
   const [stage, setStage] = useState(0);
   const [showMeaning, setShowMeaning] = useState(false);
@@ -51,10 +67,11 @@ export default function LearningSessionScreen({ navigation, route }) {
   const [repeatCount, setRepeatCount] = useState(0);
   const [quizOpts, setQuizOpts] = useState([]);
   const [quizAnswer, setQuizAnswer] = useState(null);
-  const [imageUri, setImageUri] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [photoIdx, setPhotoIdx] = useState(0);
+  const [photoRefreshed, setPhotoRefreshed] = useState(false);
   const [imgLoading, setImgLoading] = useState(false);
-  const [aiScene, setAiScene] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
+  const imageUri = photos[photoIdx]?.src?.medium || null;
 
   const stageRef = useRef(0);
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -75,36 +92,28 @@ export default function LearningSessionScreen({ navigation, route }) {
         { headers: { Authorization: PEXELS_KEY } }
       );
       const data = await res.json();
-      if (data.photos?.length > 0) setImageUri(data.photos[0].src.medium);
+      if (data.photos?.length > 0) setPhotos(data.photos);
     } catch {
     } finally {
       setImgLoading(false);
     }
   };
 
-  const loadAiScene = async () => {
-    if (aiScene || aiLoading || !word) return;
-    setAiLoading(true);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 150,
-          messages: [
-            {
-              role: "user",
-              content: `"${word.word}" kelimesi için tek cümlelik Türkçe duyusal sahne yaz.`,
-            },
-          ],
-        }),
+  // Kelimeyi ilk gördüğünde, fotoğraf beğenilmezse SADECE BİR KEZ farklı
+  // bir fotoğrafa geçilebilir (zaten çekilmiş 2. sonuca geçiliyor — ekstra
+  // ağ isteği yok).
+  const refreshPhoto = () => {
+    if (photoRefreshed || photos.length < 2) return;
+    setPhotoIdx(1);
+    setPhotoRefreshed(true);
+    // Seçilen fotoğrafı kelimenin ilerleme kaydına yazıyoruz — tekrar
+    // ekranı ve diğer ekranlar kendi Pexels sorgusunu atıp her zaman ilk
+    // sonucu göstermek yerine bunu kullanacak.
+    if (word) {
+      actions.updateWordProgress(word.id, {
+        ...(state.wordProgress[word.id] || {}),
+        photoUri: photos[1].src.medium,
       });
-      const data = await res.json();
-      setAiScene(data.content?.[0]?.text || null);
-    } catch {
-    } finally {
-      setAiLoading(false);
     }
   };
 
@@ -134,8 +143,15 @@ export default function LearningSessionScreen({ navigation, route }) {
       } catch {}
 
       try {
-        const pendingCount = getInFlightReviewCount(mergedProgress);
-        await scheduleAllReviews(pendingCount || 1, HOUR);
+        // Bildirim SADECE günlük 5 kelimelik parti tamamen dolduğunda
+        // planlanır — tek tek her kelime bittiğinde değil. Aksi halde
+        // örn. 2 kelime bitirip çıkıldığında bile "1. Tekrar" bildirimi
+        // erkenden gelirdi.
+        const batchInPlay = getBatchInPlayCount(allWords, mergedProgress);
+        if (batchInPlay >= DAILY_TARGET) {
+          const pendingCount = getInFlightReviewCount(mergedProgress);
+          await scheduleAllReviews(pendingCount || 1, HOUR);
+        }
       } catch {}
     }
     markCompleted();
@@ -256,7 +272,7 @@ export default function LearningSessionScreen({ navigation, route }) {
               <Ionicons name="volume-high-outline" size={22} color={st.color} />
             </TouchableOpacity>
           </View>
-          {showMeaning && (
+          {showMeaning && stage !== 4 && (
             <View style={s.meaningBox}>
               <Text style={[s.meaningTxt, { color: st.color }]}>
                 {word.translation}
@@ -313,11 +329,24 @@ export default function LearningSessionScreen({ navigation, route }) {
         {stage === 1 && (
           <View style={s.content}>
             {imageUri ? (
-              <Image
-                source={{ uri: imageUri }}
-                style={s.image}
-                resizeMode="cover"
-              />
+              <>
+                <Image
+                  source={{ uri: imageUri }}
+                  style={s.image}
+                  resizeMode="contain"
+                />
+                {!photoRefreshed && photos.length > 1 && (
+                  <TouchableOpacity
+                    style={[s.refreshBtn, { borderColor: st.color + "60" }]}
+                    onPress={refreshPhoto}
+                  >
+                    <Ionicons name="refresh" size={14} color={st.color} />
+                    <Text style={[s.refreshBtnTxt, { color: st.color }]}>
+                      Farklı fotoğraf
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
             ) : (
               <View style={s.imgPH}>
                 {imgLoading ? (
@@ -331,33 +360,22 @@ export default function LearningSessionScreen({ navigation, route }) {
                 )}
               </View>
             )}
-            {!aiScene ? (
-              <TouchableOpacity
-                style={[s.aiBtn, { borderColor: st.color + "60" }]}
-                onPress={loadAiScene}
-                disabled={aiLoading}
-              >
-                {aiLoading ? (
-                  <ActivityIndicator size="small" color={st.color} />
-                ) : (
-                  <Ionicons name="sparkles" size={16} color={st.color} />
-                )}
-                <Text style={[s.aiBtnTxt, { color: st.color }]}>
-                  {aiLoading ? "Yükleniyor..." : "Duyusal sahne üret"}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={[s.aiScene, { borderLeftColor: st.color }]}>
-                <Text style={s.aiSceneTxt}>{aiScene}</Text>
-              </View>
-            )}
+            <View style={[s.aiBtn, s.aiBtnDisabled]}>
+              <Ionicons name="sparkles" size={16} color={COLORS.textMuted} />
+              <Text style={[s.aiBtnTxt, { color: COLORS.textMuted }]}>
+                Duyusal sahne üret (şu an kullanılamıyor)
+              </Text>
+            </View>
           </View>
         )}
 
         {/* AŞAMA 3 — YAZ */}
         {stage === 2 &&
           (() => {
-            const hasMin = sentence.trim().length >= 3;
+            // Kelimenin kendisi 3 karakterden kısaysa (örn. "no"), minimum
+            // uzunluk şartı kelimeyi yazmayı imkansız hale getirmesin.
+            const minLen = Math.min(3, word.word.length);
+            const hasMin = sentence.trim().length >= minLen;
             const hasWord = sentence
               .toLowerCase()
               .includes(word.word.toLowerCase());
@@ -425,7 +443,7 @@ export default function LearningSessionScreen({ navigation, route }) {
                         ? "Harika, devam →"
                         : hasMin
                         ? `"${word.word}" kelimesini ekle`
-                        : "En az 3 karakter yaz"}
+                        : `En az ${minLen} karakter yaz`}
                     </Text>
                   </TouchableOpacity>
                 ) : (
@@ -569,7 +587,7 @@ export default function LearningSessionScreen({ navigation, route }) {
       </ScrollView>
 
       {stage !== 4 && (
-        <View style={s.bottom}>
+        <View style={[s.bottom, { paddingBottom: SPACING.xl + safeBottom }]}>
           <TouchableOpacity
             style={[
               s.nextBtn,
@@ -714,7 +732,24 @@ const s = StyleSheet.create({
   },
   revealedMeaning: { fontSize: FONT_SIZES.xxl + 4, fontWeight: "900" },
   revealedHint: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
-  image: { width: "100%", height: 200, borderRadius: RADIUS.xl },
+  image: {
+    width: "100%",
+    height: 340,
+    borderRadius: RADIUS.xl,
+    backgroundColor: COLORS.backgroundCard,
+  },
+  refreshBtn: {
+    flexDirection: "row",
+    alignSelf: "center",
+    alignItems: "center",
+    gap: 6,
+    marginTop: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+  },
+  refreshBtnTxt: { fontSize: FONT_SIZES.xs, fontWeight: "600" },
   imgPH: {
     height: 140,
     backgroundColor: COLORS.backgroundCard,
@@ -735,18 +770,7 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.backgroundCard,
   },
   aiBtnTxt: { fontWeight: "600", fontSize: FONT_SIZES.sm },
-  aiScene: {
-    backgroundColor: COLORS.backgroundCard,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    borderLeftWidth: 3,
-  },
-  aiSceneTxt: {
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZES.md,
-    fontStyle: "italic",
-    lineHeight: 24,
-  },
+  aiBtnDisabled: { opacity: 0.5 },
   writeLabel: {
     color: COLORS.textSecondary,
     fontSize: FONT_SIZES.sm,

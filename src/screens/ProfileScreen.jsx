@@ -17,7 +17,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import { useSubscription } from "../context/SubscriptionContext";
-import { Storage } from "../utils/storage";
 import { saveUser } from "../services/firebase";
 import {
   scheduleDailyReminder,
@@ -39,7 +38,7 @@ export default function ProfileScreen({ navigation }) {
     // Bildirim toggle
     if (key === "notifications") {
       if (value) {
-        scheduleDailyReminder(20, 0).catch(() => {});
+        scheduleDailyReminder(0, 0).catch(() => {});
       } else {
         cancelAllNotifications().catch(() => {});
       }
@@ -63,11 +62,20 @@ export default function ProfileScreen({ navigation }) {
           text: "Sıfırla",
           style: "destructive",
           onPress: async () => {
-            await Storage.clearAll();
-            Alert.alert(
-              "Sıfırlandı",
-              "Uygulama yeniden başlatıldığında sıfırlanmış olarak başlayacaksın."
-            );
+            // DÜZELTME: Eskiden sadece Storage.clearAll() çağrılıyordu —
+            // AsyncStorage temizleniyordu ama AppContext/SubscriptionContext'in
+            // bellekteki state'i hiç sıfırlanmıyordu, bu yüzden kullanıcı
+            // "Sıfırlandı" mesajını gördükten sonra bile eski kelime
+            // ilerlemesini, istatistiklerini ve premium/trial durumunu
+            // uygulamayı manuel kapatıp açana kadar görmeye devam ediyordu.
+            // actions.resetAllData() hem storage'ı temizler hem bellekteki
+            // state'i gerçek bir restart'takiyle aynı hale (initialState)
+            // getirir; resetSubscription() de aboneliği taze bir trial'a
+            // döndürür.
+            await actions.resetAllData();
+            await subActions.resetSubscription();
+            await cancelAllNotifications().catch(() => {});
+            Alert.alert("Sıfırlandı", "Tüm verilerin sıfırlandı.");
           },
         },
       ]

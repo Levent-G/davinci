@@ -217,7 +217,7 @@ Sadece yukarıdaki formatta cevap ver, başka açıklama ekleme.`;
       return;
     }
     navigation.navigate("LearningSession", {
-      words: selectedWords,
+      word: selectedWords[0],
       mode: "learn",
       level: selectedWords[0]?.level || "B1",
     });
@@ -610,7 +610,7 @@ Sadece yukarıdaki formatta cevap ver, başka açıklama ekleme.`;
                   onPress={() => {
                     if (analysis.weakWords.length > 0) {
                       navigation.navigate("LearningSession", {
-                        words: analysis.weakWords.slice(0, 5),
+                        word: analysis.weakWords[0],
                         mode: "review",
                         level: analysis.weakWords[0]?.level || "A1",
                       });

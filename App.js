@@ -7,23 +7,35 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AppProvider } from "./src/context/AppContext";
 import { SubscriptionProvider } from "./src/context/SubscriptionContext";
 import RootNavigator from "./src/navigation/RootNavigator";
-import * as Speech from "expo-speech";
 import {
   registerForPushNotifications,
   scheduleDailyReminder,
   useNotificationListener,
 } from "./src/utils/notifications";
+import { warmUpSpeech } from "./src/utils/textToSpeech";
+import { Storage } from "./src/utils/storage";
 
 export default function App() {
   useEffect(() => {
     // Bildirimleri başlat
     registerForPushNotifications()
-      .then((status) => {
-        if (status === "granted") {
-          scheduleDailyReminder(20, 0); // Her akşam 20:00
+      .then(async (status) => {
+        if (status !== "granted") return;
+        // OS izni "granted" olması, kullanıcının UYGULAMA İÇİNDE
+        // (Profil > Bildirimler) bunu açık bıraktığı anlamına gelmez —
+        // kapatmış olabilir. Bu kontrol olmadan, kullanıcı bildirimleri
+        // kapatsa bile her tam uygulama yeniden başlatmasında günlük
+        // hatırlatıcı sessizce tekrar planlanıyordu.
+        const settings = await Storage.getSettings();
+        if (settings?.notifications !== false) {
+          scheduleDailyReminder(0, 0); // Her gece 00:00
         }
       })
       .catch(() => {});
+
+    // TTS motorunu sessizce ısıt — ilk "Sesli Dinle" tıklamasındaki
+    // gecikmeyi önler (bkz. src/utils/textToSpeech.js)
+    warmUpSpeech();
   }, []);
 
   return (

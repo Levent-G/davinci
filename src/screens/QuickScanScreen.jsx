@@ -169,7 +169,7 @@ export default function QuickScanScreen({ navigation, route }) {
 
     navigation.replace("LearningSession", {
       level,
-      words: toLearn.slice(0, 5),
+      word: toLearn[0],
       mode: "learn",
     });
   };

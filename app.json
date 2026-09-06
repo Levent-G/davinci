@@ -8,6 +8,21 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": false,
     "entryPoint": "./App.js",
+    "ios": {
+      "bundleIdentifier": "com.davinci.words",
+      "supportsTablet": false,
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio",
+          "audio"
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        },
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
     "android": {
       "versionCode": 19,
       "adaptiveIcon": {
@@ -35,7 +50,21 @@
           "sounds": [],
           "mode": "production"
         }
+      ],
+      "@react-native-firebase/app",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0015070e-e31a-4e52-bf26-d5397f474410"
+      }
+    }
   }
 }

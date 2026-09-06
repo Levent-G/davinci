@@ -61,14 +61,15 @@ export default function RootNavigator() {
             component={AddWordScreen}
             options={{ presentation: "modal" }}
           />
-        
-          <Stack.Screen
-            name="Admin"
-            component={AdminNavigator}
-            options={{ presentation: "fullScreenModal", gestureEnabled: false }}
-          />
         </>
       )}
+      {/* Onboarding ekranındaki gizli 3-dokunuş de bu rotaya gidiyor,
+          bu yüzden onboarding bitmeden de kayıtlı olması gerekiyor. */}
+      <Stack.Screen
+        name="Admin"
+        component={AdminNavigator}
+        options={{ presentation: "fullScreenModal", gestureEnabled: false }}
+      />
     </Stack.Navigator>
   );
 }

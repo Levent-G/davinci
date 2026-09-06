@@ -14,11 +14,50 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import { speakWord } from "../utils/textToSpeech";
-import {
-  getMasteryLevel,
-  getMasteryLabel,
-  DAVINCI_STAGES,
-} from "../utils/davinciAlgorithm";
+import { getMasteryLevel, getMasteryLabel } from "../utils/davinciAlgorithm";
+
+// davinciAlgorithm.js bir DAVINCI_STAGES export etmiyor (bu isimde bir
+// export hiçbir yerde tanımlı değildi — import undefined dönüyor ve
+// Object.values(undefined) ekran her açıldığında crash ediyordu).
+// LearningSessionScreen'deki 5 aşamalı STAGES ile aynı sırayı/ikon/renk
+// setini kullanıyoruz, sadece burada ek açıklama metni de gösteriliyor.
+const DAVINCI_STAGES = [
+  {
+    id: 0,
+    icon: "🔍",
+    turkishName: "Merak",
+    description: "Kelimeyi ilk kez gör, merak uyandır",
+    color: "#F5A623",
+  },
+  {
+    id: 1,
+    icon: "✨",
+    turkishName: "Duyular",
+    description: "Görsellerle kelimeyi duyularınla ilişkilendir",
+    color: "#A29BFE",
+  },
+  {
+    id: 2,
+    icon: "⚗️",
+    turkishName: "Yaz",
+    description: "Kelimeyi yazarak pekiştir",
+    color: "#4ECDC4",
+  },
+  {
+    id: 3,
+    icon: "🕸️",
+    turkishName: "Bağla",
+    description: "Cümle içinde bağlam kur",
+    color: "#81C784",
+  },
+  {
+    id: 4,
+    icon: "⚖️",
+    turkishName: "Test",
+    description: "Quiz ile öğrendiğini test et",
+    color: "#E17055",
+  },
+];
 
 const LEVEL_COLORS = {
   A1: COLORS.levelA1,
@@ -30,8 +69,9 @@ const LEVEL_COLORS = {
 };
 
 export default function WordDetailScreen({ navigation, route }) {
-  const { word } = route.params;
+  const { word } = route.params || {};
   const { state, actions } = useApp();
+  if (!word) return null;
   const progress = state.wordProgress[word.id] || {};
   const mastery = getMasteryLevel(progress);
   const masteryColor =
@@ -61,7 +101,7 @@ export default function WordDetailScreen({ navigation, route }) {
 
   const handlePractice = () => {
     navigation.navigate("LearningSession", {
-      words: [word],
+      word,
       mode: "practice",
     });
   };
@@ -167,24 +207,27 @@ export default function WordDetailScreen({ navigation, route }) {
           <View style={styles.masteryStats}>
             <StatItem
               label="Doğru"
-              value={progress.correctCount || 0}
+              value={Math.max(
+                (progress.reviewsDone || 0) - (progress.wrongTotal || 0),
+                0
+              )}
               color={COLORS.success}
             />
             <StatItem
               label="Yanlış"
-              value={progress.incorrectCount || 0}
+              value={progress.wrongTotal || 0}
               color={COLORS.error}
             />
             <StatItem
               label="Tekrar"
-              value={progress.intervalIndex || 0}
+              value={progress.reviewsDone || 0}
               color={COLORS.accent}
             />
           </View>
-          {progress.nextReviewDate && (
+          {progress.nextReviewAt && (
             <Text style={styles.nextReview}>
               Sonraki tekrar:{" "}
-              {new Date(progress.nextReviewDate).toLocaleDateString("tr-TR")}
+              {new Date(progress.nextReviewAt).toLocaleDateString("tr-TR")}
             </Text>
           )}
         </View>

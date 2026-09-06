@@ -14,7 +14,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
-import { getMasteryLevel, getMasteryLabel } from "../utils/davinciAlgorithm";
+import {
+  getMasteryLevel,
+  getMasteryLabel,
+  STATUS,
+} from "../utils/davinciAlgorithm";
+
+// "Öğrenilen" tanımı tüm ekranlarda (Home, Learn, Stats) TEK kaynaktan
+// aynı olmalı: kelime 5 aşamayı+3 tekrarı tamamlayıp "learned" olmuş ya
+// da "biliyorum" denip "known" olmuş olmalı. Henüz tekrar aşamasında
+// olan (status "review") kelimeler öğrenilmiş sayılmaz — eskiden burada
+// getMasteryLevel(...) >= 3 kullanılıyordu, bu da 1 tekrar tamamlamış
+// ama daha bitmemiş kelimeleri de "öğrenilen" sayıp Home ekranıyla
+// farklı sayılar göstermesine yol açıyordu.
+const isLearned = (p) =>
+  [STATUS.LEARNED, STATUS.KNOWN].includes(p?.status);
 import { WORDS_BY_LEVEL } from "../data/wordDatabase";
 
 const { width } = Dimensions.get("window");
@@ -97,15 +111,15 @@ export default function StatsScreen({ navigation }) {
         ...(WORDS_BY_LEVEL[level] || []),
         ...state.customWords.filter((w) => w.level === level),
       ];
-      const learned = words.filter(
-        (w) => getMasteryLevel(wordProgress[w.id] || {}) >= 3
+      const learned = words.filter((w) =>
+        isLearned(wordProgress[w.id])
       ).length;
       const mastered = words.filter(
         (w) => getMasteryLevel(wordProgress[w.id] || {}) >= 5
       ).length;
       const inProgress = words.filter((w) => {
-        const m = getMasteryLevel(wordProgress[w.id] || {});
-        return m > 0 && m < 3;
+        const p = wordProgress[w.id];
+        return getMasteryLevel(p || {}) > 0 && !isLearned(p);
       }).length;
       return {
         level,
@@ -136,7 +150,7 @@ export default function StatsScreen({ navigation }) {
       const cat = w.category || "other";
       if (!cats[cat]) cats[cat] = { total: 0, learned: 0 };
       cats[cat].total++;
-      if (getMasteryLevel(wordProgress[w.id] || {}) >= 3) cats[cat].learned++;
+      if (isLearned(wordProgress[w.id])) cats[cat].learned++;
     });
     return Object.entries(cats)
       .map(([cat, data]) => ({
@@ -167,11 +181,7 @@ export default function StatsScreen({ navigation }) {
     };
   }, [stats]);
 
-  const totalLearned = Object.values(wordProgress).filter((p) => {
-    const s = p?.status || "new";
-    // Yeni: done, known | Eski: learned, known
-    return ["done", "known", "learned"].includes(s) || getMasteryLevel(p) >= 3;
-  }).length;
+  const totalLearned = Object.values(wordProgress).filter(isLearned).length;
   const completionPct =
     allWords.length > 0
       ? Math.round((totalLearned / allWords.length) * 100)

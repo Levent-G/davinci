@@ -11,6 +11,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import {
@@ -39,6 +40,21 @@ export default function HomeScreen({ navigation }) {
   const slideAnim = useRef(new Animated.Value(20)).current;
   const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
+  // LearnScreen'deki gibi periyodik "tick" — reviewCount/nextReviewIn gibi
+  // değerler saate göre hesaplanıyor (isDue/isToday). Bu tick olmadan,
+  // kullanıcı Ana Sayfa'da dururken bir kelimenin tekrar zamanı gelse bile
+  // (başka bir state değişikliği tetiklenmeden) ekran bunu hiç
+  // yansıtmıyordu — sadece uygulama arka plana alınıp öne gelince
+  // (AppContext'in AppState dinleyicisi) güncelleniyordu.
+  const [tick, setTick] = React.useState(0);
+  useFocusEffect(
+    React.useCallback(() => {
+      setTick((t) => t + 1);
+      const iv = setInterval(() => setTick((t) => t + 1), 10000);
+      return () => clearInterval(iv);
+    }, [])
+  );
+
   const allWords = actions.getAllWords();
   const streak = state.stats.streak || 0;
   const userName = state.user?.name || "Öğrenci";
@@ -47,6 +63,9 @@ export default function HomeScreen({ navigation }) {
     state.settings?.preferredLevel ||
     "A1";
 
+  // dailyStats/reviewWords/nextReviewIn zaten her render'da yeniden
+  // hesaplanıyor (memoize edilmemiş) — yukarıdaki tick sadece periyodik
+  // re-render'ı TETİKLEMEK için var, burada ayrıca referans vermeye gerek yok.
   const dailyStats = getDailyStats(allWords, state.wordProgress);
   const reviewWords = getTodayReviewWords(allWords, state.wordProgress);
   const reviewCount = reviewWords.length;
@@ -59,7 +78,7 @@ export default function HomeScreen({ navigation }) {
     if (!words.length) return { pct: 0, learned: 0, total: 0 };
     const learned = words.filter((w) => {
       const p = state.wordProgress[w.id];
-      return p && (p.knownByUser || (p.masteryLevel || 0) >= 4);
+      return p && [WORD_STATUS.LEARNED, WORD_STATUS.KNOWN].includes(p.status);
     }).length;
     return {
       pct: Math.round((learned / words.length) * 100),
@@ -316,7 +335,9 @@ export default function HomeScreen({ navigation }) {
               const words = allWords.filter((w) => w.level === lvl);
               const learned = words.filter((w) => {
                 const p = state.wordProgress[w.id];
-                return p && (p.knownByUser || (p.masteryLevel || 0) >= 4);
+                return (
+                  p && [WORD_STATUS.LEARNED, WORD_STATUS.KNOWN].includes(p.status)
+                );
               }).length;
               const pct = words.length
                 ? Math.round((learned / words.length) * 100)

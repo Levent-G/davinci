@@ -1,5 +1,26 @@
 // src/services/firebase.js
+import firebase from "@react-native-firebase/app";
 import firestore from "@react-native-firebase/firestore";
+
+// GÜVENLİK AĞI: iOS'ta useFrameworks:"static" ile derlenen build'lerde
+// Firebase'in native otomatik başlatması (GoogleService-Info.plist'ten)
+// bazen çalışmıyor ve "No Firebase App '[DEFAULT]' has been created"
+// hatası alınıyor. Native başlatma zaten olduysa bu no-op, olmadıysa
+// burada elle (JS'den) başlatıyoruz.
+try {
+  if (!firebase.apps.length) {
+    firebase.initializeApp({
+      apiKey: "AIzaSyA8-ZUZNgf4mv7iLKkN0-uf145-SqqU1JA",
+      appId: "1:502687781194:ios:601d7faab28f7cb37ab1b3",
+      projectId: "davinci-d30bc",
+      storageBucket: "davinci-d30bc.firebasestorage.app",
+      messagingSenderId: "502687781194",
+    });
+  }
+} catch {
+  // Native taraf zaten başlatmış olabilir (ör. "app already exists") —
+  // bu durumda uygulamanın çökmesini engellemek için hatayı yutuyoruz.
+}
 
 // Firestore offline persistence aktif et (ilk çağrıda bir kez)
 let persistenceEnabled = false;
@@ -255,6 +276,7 @@ export async function getAppAnalytics() {
     try {
       const sessionsSnap = await firestore()
         .collection(COLLECTIONS.SESSIONS)
+        .orderBy("createdAt", "desc")
         .limit(200)
         .get();
       sessionsCount = sessionsSnap.size;
@@ -297,6 +319,8 @@ export async function getWeeklySessionData() {
 
     const snap = await firestore()
       .collection(COLLECTIONS.SESSIONS)
+      .where("createdAt", ">=", sevenDaysAgo)
+      .orderBy("createdAt", "desc")
       .limit(500)
       .get();
 

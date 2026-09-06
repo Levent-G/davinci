@@ -134,6 +134,35 @@ export function SubscriptionProvider({ children }) {
       daysLeft: state.trialDaysLeft,
       isExpired: state.isTrialExpired,
     }),
+
+    // ProfileScreen'in "Verileri Sıfırla" aksiyonu Storage.clearAll() ile
+    // subscription kaydını da AsyncStorage'dan siliyor, ama bu context'in
+    // bellekteki state'i (özellikle isPremium) ayrı bir provider'da tutuluyor
+    // ve sıfırlanmadan kalırsa premium bir kullanıcı, verileri sıfırladıktan
+    // sonra bile ProfileScreen'de "Premium Üye" görünmeye devam eder — halbuki
+    // gerçek bir restart'ta Storage boş bulunup taze bir trial oluşturulurdu.
+    // Bu aksiyon aynı "taze trial oluştur" mantığını hemen, restart'a gerek
+    // kalmadan uygular.
+    resetSubscription: async () => {
+      const now = new Date();
+      const trialEnd = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+      const fresh = {
+        plan: "trial",
+        trialStartDate: now.toISOString(),
+        trialEndsDate: trialEnd.toISOString(),
+        isActive: true,
+        isPremium: false,
+      };
+      await Storage.saveSubscription(fresh);
+      dispatch({
+        type: "INIT_SUBSCRIPTION",
+        payload: {
+          ...fresh,
+          trialDaysLeft: TRIAL_DAYS,
+          isTrialExpired: false,
+        },
+      });
+    },
   };
 
   return (
