@@ -25,10 +25,10 @@ import { speakWord } from "../utils/textToSpeech";
 import { hapticLight } from "../utils/haptics";
 import { STATUS, DAILY_TARGET, getNewWords } from "../utils/davinciAlgorithm";
 import { wasCompleted } from "../utils/sessionBridge";
+import { getWordPhotos } from "../services/wordPhotos";
 
 const { width } = Dimensions.get("window");
 const SWIPE_THRESHOLD = width * 0.25;
-const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
 const LEVEL_COLORS = {
   A1: "#4ECDC4",
   A2: "#45B7D1",
@@ -60,26 +60,25 @@ export default function PreScanScreen({ navigation, route }) {
   const isFirstFocus = useRef(true);
 
   const [displayIdx, setDisplayIdx] = useState(0);
-  const [photos, setPhotos] = useState([]);
+  const [photos, setPhotos] = useState([]); // Kelimenin Firebase'deki kalıcı foto havuzu (URL dizisi)
   const [photoIdx, setPhotoIdx] = useState(0);
   const [photoRefreshed, setPhotoRefreshed] = useState(false);
   const [imgLoading, setImgLoading] = useState(false);
-  const imageUri = photos[photoIdx]?.src?.medium || null;
+  const imageUri = photos[photoIdx] || null;
 
   const pan = useRef(new Animated.ValueXY()).current;
 
+  // Önce kelimenin Firebase'deki kalıcı foto havuzuna bakar (admin panelinden
+  // yüklenmiş bir fotoğraf varsa Pexels'e hiç sorulmadan direkt o gösterilir);
+  // havuz boşsa Pexels'ten çekip Firebase'e kalıcı olarak kaydeder.
   const loadImage = useCallback(async (word) => {
     setPhotos([]);
     setImgLoading(true);
     try {
-      const res = await fetch(
-        `https://api.pexels.com/v1/search?query=${encodeURIComponent(
-          word
-        )}&per_page=3`,
-        { headers: { Authorization: PEXELS_KEY } }
-      );
-      const data = await res.json();
-      if (data.photos?.length > 0) setPhotos(data.photos);
+      const result = await getWordPhotos(word);
+      setPhotos(result.photos);
+      const idx = result.activeUrl ? result.photos.indexOf(result.activeUrl) : 0;
+      setPhotoIdx(idx >= 0 ? idx : 0);
     } catch {
     } finally {
       setImgLoading(false);
@@ -89,16 +88,15 @@ export default function PreScanScreen({ navigation, route }) {
   // Kart her değiştiğinde (yeni kelime) fotoğraf yenileme hakkı sıfırlanır.
   const refreshPhoto = () => {
     if (photoRefreshed || photos.length < 2) return;
-    setPhotoIdx(1);
+    setPhotoIdx((prev) => (prev + 1) % photos.length);
     setPhotoRefreshed(true);
   };
 
   useEffect(() => {
     const word = pool[displayIdx];
     if (word) {
-      setPhotoIdx(0);
       setPhotoRefreshed(false);
-      loadImage(word.word);
+      loadImage(word);
     }
   }, [displayIdx]);
 

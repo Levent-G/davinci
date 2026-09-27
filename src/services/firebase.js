@@ -1,26 +1,56 @@
 // src/services/firebase.js
+import { Platform } from "react-native";
 import firebase from "@react-native-firebase/app";
 import firestore from "@react-native-firebase/firestore";
 
-// GÜVENLİK AĞI: iOS'ta useFrameworks:"static" ile derlenen build'lerde
-// Firebase'in native otomatik başlatması (GoogleService-Info.plist'ten)
-// bazen çalışmıyor ve "No Firebase App '[DEFAULT]' has been created"
-// hatası alınıyor. Native başlatma zaten olduysa bu no-op, olmadıysa
-// burada elle (JS'den) başlatıyoruz.
-try {
-  if (!firebase.apps.length) {
-    firebase.initializeApp({
-      apiKey: "AIzaSyA8-ZUZNgf4mv7iLKkN0-uf145-SqqU1JA",
-      appId: "1:502687781194:ios:601d7faab28f7cb37ab1b3",
-      projectId: "davinci-d30bc",
-      storageBucket: "davinci-d30bc.firebasestorage.app",
-      messagingSenderId: "502687781194",
-    });
-  }
-} catch {
-  // Native taraf zaten başlatmış olabilir (ör. "app already exists") —
-  // bu durumda uygulamanın çökmesini engellemek için hatayı yutuyoruz.
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyA8-ZUZNgf4mv7iLKkN0-uf145-SqqU1JA",
+  appId: Platform.select({
+    android: "1:502687781194:android:5eb25a8ef17eec847ab1b3",
+    default: "1:502687781194:ios:601d7faab28f7cb37ab1b3",
+  }),
+  projectId: "davinci-d30bc",
+  storageBucket: "davinci-d30bc.firebasestorage.app",
+  messagingSenderId: "502687781194",
+  // RNFB initializeApp bu alanı (Realtime Database kullanılmasa bile)
+  // ZORUNLU tutuyor; eksikse çağrı sessizce Promise reddiyle başarısız oluyor.
+  databaseURL: "https://davinci-d30bc-default-rtdb.firebaseio.com",
+};
+
+// GÜVENLİK AĞI: iOS üretim build'lerinde Firebase'in native otomatik
+// başlatması (GoogleService-Info.plist'ten) çalışmayabiliyor ve
+// "No Firebase App '[DEFAULT]' has been created" hatası alınıyor. Bu durumda
+// varsayılan uygulamayı JS'ten kendimiz başlatıyoruz. `initializeApp` bir
+// Promise döndürür (hatası try/catch ile DEĞİL await ile yakalanır) ve native
+// taraf bitmeden Firestore'a dokunmamak için mutlaka beklenmelidir.
+let initPromise = null;
+let lastInitError = null;
+export function getLastInitError() {
+  return lastInitError;
 }
+
+export async function ensureFirebaseReady() {
+  if (!initPromise) {
+    initPromise = (async () => {
+      if (firebase.apps.length) return; // native taraf zaten başlatmış
+      try {
+        await firebase.initializeApp(FIREBASE_CONFIG);
+        lastInitError = null;
+      } catch (e) {
+        lastInitError = e?.message || String(e);
+        console.warn("[firebase] initializeApp başarısız:", lastInitError);
+        // native taraf bu arada başlattıysa sorun yok; değilse bir sonraki
+        // çağrıda sıfırdan tekrar denensin.
+        if (!firebase.apps.length) initPromise = null;
+      }
+    })();
+  }
+  await initPromise;
+}
+
+// Modül yüklenir yüklenmez başlatma denemesi yap; asıl garanti her
+// fonksiyonun başındaki `await ensureFirebaseReady()`.
+ensureFirebaseReady();
 
 // Firestore offline persistence aktif et (ilk çağrıda bir kez)
 let persistenceEnabled = false;
@@ -53,6 +83,7 @@ export const ADMIN_PIN = "1453";
 
 export async function getAllUsers(limitCount = 100) {
   try {
+    await ensureFirebaseReady();
     const snap = await firestore()
       .collection(COLLECTIONS.USERS)
       .limit(limitCount)
@@ -66,6 +97,7 @@ export async function getAllUsers(limitCount = 100) {
 
 export async function getUserStats(userId) {
   try {
+    await ensureFirebaseReady();
     const snap = await firestore()
       .collection(COLLECTIONS.USER_PROGRESS)
       .doc(userId)
@@ -78,12 +110,15 @@ export async function getUserStats(userId) {
 
 export async function saveUser(userId, data) {
   // Fire and forget - UI'yi bloklamaz
-  firestore()
-    .collection(COLLECTIONS.USERS)
-    .doc(userId)
-    .set(
-      { ...data, updatedAt: firestore.FieldValue.serverTimestamp() },
-      { merge: true }
+  ensureFirebaseReady()
+    .then(() =>
+      firestore()
+        .collection(COLLECTIONS.USERS)
+        .doc(userId)
+        .set(
+          { ...data, updatedAt: firestore.FieldValue.serverTimestamp() },
+          { merge: true }
+        )
     )
     .catch((e) => console.warn("saveUser bg:", e.message));
   return true;
@@ -91,6 +126,7 @@ export async function saveUser(userId, data) {
 
 export async function updateUserSubscription(userId, plan) {
   try {
+    await ensureFirebaseReady();
     await firestore()
       .collection(COLLECTIONS.USERS)
       .doc(userId)
@@ -107,6 +143,7 @@ export async function updateUserSubscription(userId, plan) {
 
 export async function deleteUser(userId) {
   try {
+    await ensureFirebaseReady();
     await firestore().collection(COLLECTIONS.USERS).doc(userId).delete();
     return true;
   } catch (e) {
@@ -118,14 +155,39 @@ export async function deleteUser(userId) {
    KELİME İŞLEMLERİ
 ═══════════════════════════════════════════ */
 
+let lastWordsError = null;
+export function getLastWordsError() {
+  return lastWordsError;
+}
+
+// Admin panelinden yapılan bir düzenlemeden hemen sonra eski (cache'deki)
+// veriyi göstermemek için önce doğrudan sunucudan okuyoruz; sunucuya
+// ulaşılamazsa (ağ/zaman aşımı) yerel önbelleğe düşüyoruz.
+async function fetchWordsQuery(ref) {
+  try {
+    return await ref.get({ source: "server" });
+  } catch {
+    return await ref.get();
+  }
+}
+
+// ~5600 belgeyi tek büyük istekle çekmek yerine seviye seviye (6 küçük
+// sorgu, paralel) çekiyoruz — tek büyük okuma bazı cihazlarda zaman
+// aşımına düşüp sessizce boş liste döndürüyordu.
 export async function getFirestoreWords(level = null) {
   try {
-    let ref = firestore().collection(COLLECTIONS.WORDS);
-    if (level) ref = ref.where("level", "==", level);
-    // Cache'den önce oku (offline support)
-    const snap = await ref.get();
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    await ensureFirebaseReady();
+    const col = firestore().collection(COLLECTIONS.WORDS);
+    const levels = level ? [level] : ["A1", "A2", "B1", "B2", "C1", "C2"];
+    const snaps = await Promise.all(
+      levels.map((lvl) => fetchWordsQuery(col.where("level", "==", lvl)))
+    );
+    lastWordsError = null;
+    return snaps.flatMap((snap) =>
+      snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    );
   } catch (e) {
+    lastWordsError = e?.message || String(e);
     console.error("getFirestoreWords:", e);
     return [];
   }
@@ -133,6 +195,7 @@ export async function getFirestoreWords(level = null) {
 
 export async function addFirestoreWord(wordData) {
   try {
+    await ensureFirebaseReady();
     const ref = await firestore()
       .collection(COLLECTIONS.WORDS)
       .add({
@@ -149,13 +212,19 @@ export async function addFirestoreWord(wordData) {
 
 export async function updateFirestoreWord(wordId, updates) {
   try {
+    // set + merge kullanıyoruz (update değil): kelime henüz seed edilmemişse
+    // bile (doc yoksa) admin ekranından yapılan düzenleme kaybolmaz.
+    await ensureFirebaseReady();
     await firestore()
       .collection(COLLECTIONS.WORDS)
       .doc(wordId)
-      .update({
-        ...updates,
-        updatedAt: firestore.FieldValue.serverTimestamp(),
-      });
+      .set(
+        {
+          ...updates,
+          updatedAt: firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
     return true;
   } catch (e) {
     return false;
@@ -164,6 +233,7 @@ export async function updateFirestoreWord(wordId, updates) {
 
 export async function deleteFirestoreWord(wordId) {
   try {
+    await ensureFirebaseReady();
     await firestore().collection(COLLECTIONS.WORDS).doc(wordId).delete();
     return true;
   } catch (e) {
@@ -173,13 +243,22 @@ export async function deleteFirestoreWord(wordId) {
 
 export async function updateWordImage(wordId, imageUrl) {
   try {
+    // set + merge (update değil): kelime henüz Firestore'a seed edilmemişse
+    // bile (doc yoksa) admin panelinden fotoğraf ayarlamak başarısız olmaz.
+    // imageUrl kaldırılıyorsa (null) alanı gerçekten siliyoruz (FieldValue.delete)
+    // — düz null değeri bırakmıyoruz ki "özel fotoğraf var mı" kontrolleri
+    // (word.imageUrl) her yerde tutarlı çalışsın.
+    await ensureFirebaseReady();
     await firestore()
       .collection(COLLECTIONS.WORDS)
       .doc(wordId)
-      .update({
-        imageUrl,
-        imageUpdatedAt: firestore.FieldValue.serverTimestamp(),
-      });
+      .set(
+        {
+          imageUrl: imageUrl ?? firestore.FieldValue.delete(),
+          imageUpdatedAt: firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
     return true;
   } catch (e) {
     return false;
@@ -188,6 +267,7 @@ export async function updateWordImage(wordId, imageUrl) {
 
 export async function seedWordsToFirestore(words) {
   try {
+    await ensureFirebaseReady();
     const batch = firestore().batch();
     words.forEach((word) => {
       const ref = firestore().collection(COLLECTIONS.WORDS).doc(word.id);
@@ -216,30 +296,36 @@ export async function seedWordsToFirestore(words) {
 
 export async function saveSession(userId, sessionData) {
   // Fire and forget - UI'yi bloklamaz
-  firestore()
-    .collection(COLLECTIONS.SESSIONS)
-    .add({
-      userId,
-      ...sessionData,
-      createdAt: firestore.FieldValue.serverTimestamp(),
-    })
+  ensureFirebaseReady()
+    .then(() =>
+      firestore()
+        .collection(COLLECTIONS.SESSIONS)
+        .add({
+          userId,
+          ...sessionData,
+          createdAt: firestore.FieldValue.serverTimestamp(),
+        })
+    )
     .catch((e) => console.warn("saveSession bg:", e.message));
   return true;
 }
 
 export async function saveUserProgress(userId, wordId, progressData) {
   // Fire and forget - UI'yi bloklamaz
-  firestore()
-    .collection(COLLECTIONS.USER_PROGRESS)
-    .doc(`${userId}_${wordId}`)
-    .set(
-      {
-        userId,
-        wordId,
-        ...progressData,
-        updatedAt: firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
+  ensureFirebaseReady()
+    .then(() =>
+      firestore()
+        .collection(COLLECTIONS.USER_PROGRESS)
+        .doc(`${userId}_${wordId}`)
+        .set(
+          {
+            userId,
+            wordId,
+            ...progressData,
+            updatedAt: firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        )
     )
     .catch((e) => console.warn("saveProgress bg:", e.message));
   return true;
@@ -251,6 +337,7 @@ export async function saveUserProgress(userId, wordId, progressData) {
 
 export async function getAppAnalytics() {
   try {
+    await ensureFirebaseReady();
     const [usersSnap, wordsSnap] = await Promise.all([
       firestore().collection(COLLECTIONS.USERS).get(),
       firestore().collection(COLLECTIONS.WORDS).get(),
@@ -312,6 +399,7 @@ export async function getAppAnalytics() {
 
 export async function getWeeklySessionData() {
   try {
+    await ensureFirebaseReady();
     // 7 ayrı sorgu yerine tek sorguda son 7 günü çek
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -361,22 +449,32 @@ export async function getWeeklySessionData() {
 ═══════════════════════════════════════════ */
 
 export async function verifyAdminPin(pin) {
-  try {
-    const snap = await firestore()
-      .collection(COLLECTIONS.ADMIN)
-      .doc("config")
-      .get();
-    if (snap.exists && snap.data().pin) {
-      return snap.data().pin === pin;
+  const fallback = pin === ADMIN_PIN;
+  const remoteCheck = (async () => {
+    try {
+      await ensureFirebaseReady();
+      const snap = await firestore()
+        .collection(COLLECTIONS.ADMIN)
+        .doc("config")
+        .get();
+      if (snap.exists && snap.data().pin) {
+        return snap.data().pin === pin;
+      }
+      return fallback;
+    } catch {
+      return fallback;
     }
-    return pin === ADMIN_PIN;
-  } catch {
-    return pin === ADMIN_PIN;
-  }
+  })();
+  // Ağ yoksa/yavaşsa giriş ekranı sonsuza kadar beklemesin.
+  const timeout = new Promise((resolve) =>
+    setTimeout(() => resolve(fallback), 6000)
+  );
+  return Promise.race([remoteCheck, timeout]);
 }
 
 export async function updateAdminPin(newPin) {
   try {
+    await ensureFirebaseReady();
     await firestore()
       .collection(COLLECTIONS.ADMIN)
       .doc("config")

@@ -1,21 +1,26 @@
 // src/screens/admin/AdminWordsScreen.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   TextInput,
+  FlatList,
   Alert,
   ActivityIndicator,
-  FlatList,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../../utils/theme";
 import { ALL_WORDS } from "../../data/wordDatabase";
-import { seedWordsToFirebase } from "../../services/seedFirebase";
+import { useApp } from "../../context/AppContext";
+import {
+  getFirestoreWords,
+  getLastWordsError,
+  getLastInitError,
+} from "../../services/firebase";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const LEVEL_COLORS = {
@@ -28,47 +33,56 @@ const LEVEL_COLORS = {
 };
 
 export default function AdminWordsScreen({ navigation }) {
+  const { state, actions } = useApp();
   const [selectedLevel, setSelectedLevel] = useState("A1");
   const [search, setSearch] = useState("");
-  const [seeding, setSeeding] = useState(false);
-  const [seedProgress, setSeedProgress] = useState(0);
+  const [onlyMissingPhoto, setOnlyMissingPhoto] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
-  const filtered = ALL_WORDS.filter((w) => {
-    const matchLevel = w.level === selectedLevel;
+  // Bir kelimeyi düzenleyip geri dönüldüğünde (fotoğraf ekleme/kaldırma dahil)
+  // liste her zaman Firebase'deki en güncel veriyi göstersin diye, ekran her
+  // odaklandığında (focus) taze veri çekiyoruz — context'teki fire-and-forget
+  // yenilemeye güvenmek yerine garantili bir tazeleme.
+  useFocusEffect(
+    useCallback(() => {
+      actions.refreshFirestoreWords();
+    }, [])
+  );
+
+  // Firebase'e seed edildiyse oradaki (admin'in düzenlemiş olabileceği,
+  // fotoğraflı) sürüm kullanılır — yoksa uygulamayla birlikte paketlenen
+  // yerel liste (bkz. AppContext.getAllWords ile aynı öncelik).
+  const fromFirestore = !!state.firestoreWords?.length;
+  const words = fromFirestore ? state.firestoreWords : ALL_WORDS;
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    const list = await getFirestoreWords();
+    setRetrying(false);
+    if (list.length > 0) {
+      await actions.refreshFirestoreWords();
+      Alert.alert("Yüklendi", `${list.length} kelime Firebase'den alındı.`);
+    } else {
+      const initErr = getLastInitError();
+      Alert.alert(
+        "Firebase'den kelime alınamadı",
+        `${getLastWordsError() || "Sunucu boş sonuç döndürdü."}${
+          initErr ? `\n\nBaşlatma hatası: ${initErr}` : ""
+        }`
+      );
+    }
+  };
+  const levelWords = words.filter((w) => w.level === selectedLevel);
+  const photographedCount = levelWords.filter((w) => w.imageUrl).length;
+
+  const filtered = levelWords.filter((w) => {
     const matchSearch =
       search.trim() === "" ||
       w.word.toLowerCase().includes(search.toLowerCase()) ||
       w.translation.toLowerCase().includes(search.toLowerCase());
-    return matchLevel && matchSearch;
+    const matchPhoto = !onlyMissingPhoto || !w.imageUrl;
+    return matchSearch && matchPhoto;
   });
-
-  const handleSeedFirebase = async () => {
-    Alert.alert(
-      "🔥 Firebase Seed",
-      `${ALL_WORDS.length} kelime Firebase'e yüklenecek. Devam?`,
-      [
-        { text: "İptal", style: "cancel" },
-        {
-          text: "Yükle",
-          onPress: async () => {
-            setSeeding(true);
-            setSeedProgress(0);
-            const result = await seedWordsToFirebase((done, total) => {
-              setSeedProgress(Math.round((done / total) * 100));
-            });
-            setSeeding(false);
-            setSeedProgress(0);
-            Alert.alert(
-              result.success ? "✅ Başarılı!" : "❌ Hata",
-              result.success
-                ? `${result.count} kelime Firebase'e yüklendi!`
-                : result.error
-            );
-          },
-        },
-      ]
-    );
-  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -111,12 +125,55 @@ export default function AdminWordsScreen({ navigation }) {
         )}
       </View>
 
+      {/* Fotoğrafsız kelimeleri hızlıca bulma filtresi */}
+      <TouchableOpacity
+        style={[
+          styles.photoFilterChip,
+          onlyMissingPhoto && styles.photoFilterChipActive,
+        ]}
+        onPress={() => setOnlyMissingPhoto((v) => !v)}
+        activeOpacity={0.8}
+      >
+        <Ionicons
+          name={onlyMissingPhoto ? "checkbox" : "square-outline"}
+          size={16}
+          color={onlyMissingPhoto ? COLORS.accent : COLORS.textMuted}
+        />
+        <Text
+          style={[
+            styles.photoFilterText,
+            onlyMissingPhoto && { color: COLORS.accent },
+          ]}
+        >
+          Sadece özel fotoğrafı olmayanları göster
+        </Text>
+      </TouchableOpacity>
+
+      {!fromFirestore && (
+        <TouchableOpacity
+          style={styles.warnBanner}
+          onPress={handleRetry}
+          disabled={retrying}
+          activeOpacity={0.8}
+        >
+          {retrying ? (
+            <ActivityIndicator size="small" color={COLORS.warning} />
+          ) : (
+            <Ionicons name="cloud-offline-outline" size={16} color={COLORS.warning} />
+          )}
+          <Text style={styles.warnBannerText}>
+            Kelimeler Firebase'den yüklenemedi, yerel liste gösteriliyor
+            (yüklenen fotoğraflar görünmez). Dokunarak tekrar dene.
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* Seviye Seçici — 3x2 grid, büyük butonlar */}
       <View style={styles.levelGrid}>
         {LEVELS.map((lvl) => {
           const active = selectedLevel === lvl;
           const color = LEVEL_COLORS[lvl];
-          const count = ALL_WORDS.filter((w) => w.level === lvl).length;
+          const count = words.filter((w) => w.level === lvl).length;
           return (
             <TouchableOpacity
               key={lvl}
@@ -149,21 +206,6 @@ export default function AdminWordsScreen({ navigation }) {
         })}
       </View>
 
-      {/* Firebase Seed Butonu */}
-      {seeding ? (
-        <View style={styles.seedingRow}>
-          <ActivityIndicator size="small" color={COLORS.accent} />
-          <Text style={styles.seedingText}>Yükleniyor... %{seedProgress}</Text>
-        </View>
-      ) : (
-        <TouchableOpacity style={styles.seedBtn} onPress={handleSeedFirebase}>
-          <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-          <Text style={styles.seedBtnText}>
-            Firebase'e Seed Et ({ALL_WORDS.length})
-          </Text>
-        </TouchableOpacity>
-      )}
-
       {/* Kelime Listesi */}
       <FlatList
         data={filtered}
@@ -172,14 +214,24 @@ export default function AdminWordsScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <Text style={styles.listHeader}>
-            {selectedLevel} — {filtered.length} kelime
+            {selectedLevel} — {filtered.length} kelime · {photographedCount}/
+            {levelWords.length} fotoğraflı
             {search ? ` (arama: "${search}")` : ""}
           </Text>
         }
         renderItem={({ item }) => (
-          <View style={styles.wordCard}>
+          <TouchableOpacity
+            style={styles.wordCard}
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate("AdminEditWord", { word: item })}
+          >
             <View style={styles.wordCardLeft}>
-              <Text style={styles.wordText}>{item.word}</Text>
+              <View style={styles.wordTitleRow}>
+                <Text style={styles.wordText}>{item.word}</Text>
+                {item.imageUrl && (
+                  <Ionicons name="image" size={13} color={COLORS.accent} />
+                )}
+              </View>
               <Text style={styles.wordTr}>{item.translation}</Text>
               <Text style={styles.wordExample} numberOfLines={1}>
                 {item.example}
@@ -200,7 +252,12 @@ export default function AdminWordsScreen({ navigation }) {
               </View>
               <Text style={styles.catText}>{item.category}</Text>
             </View>
-          </View>
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={COLORS.textMuted}
+            />
+          </TouchableOpacity>
         )}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
@@ -266,6 +323,34 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md,
   },
 
+  warnBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.warning + "80",
+    backgroundColor: COLORS.warning + "15",
+  },
+  warnBannerText: { flex: 1, color: COLORS.warning, fontSize: FONT_SIZES.xs },
+  photoFilterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.sm,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  photoFilterChipActive: { borderColor: COLORS.accent + "60" },
+  photoFilterText: { color: COLORS.textMuted, fontSize: FONT_SIZES.sm },
+
   // ── Seviye grid: 3 sütun, büyük butonlar ──
   levelGrid: {
     flexDirection: "row",
@@ -288,28 +373,6 @@ const styles = StyleSheet.create({
   levelChipLabel: { fontSize: 18, fontWeight: "900" },
   levelChipCount: { fontSize: 11, fontWeight: "600" },
 
-  // Seed butonu
-  seedBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: SPACING.sm,
-    backgroundColor: "#FF6B35",
-    marginHorizontal: SPACING.md,
-    marginBottom: SPACING.md,
-    padding: SPACING.md,
-    borderRadius: RADIUS.lg,
-  },
-  seedBtnText: { color: "#fff", fontWeight: "700", fontSize: FONT_SIZES.md },
-  seedingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: SPACING.sm,
-    padding: SPACING.md,
-  },
-  seedingText: { color: COLORS.textSecondary, fontWeight: "600" },
-
   // Liste
   list: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.xxxl },
   listHeader: {
@@ -322,6 +385,7 @@ const styles = StyleSheet.create({
   wordCard: {
     flexDirection: "row",
     alignItems: "center",
+    gap: SPACING.sm,
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.lg,
     padding: SPACING.md,
@@ -330,6 +394,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   wordCardLeft: { flex: 1, gap: 2 },
+  wordTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   wordText: {
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.md,

@@ -10,6 +10,7 @@ import {
   Dimensions,
   Alert,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,6 +20,11 @@ import { useSubscription } from "../context/SubscriptionContext";
 import { isPurchasesConfigured } from "../services/purchases";
 
 const { width } = Dimensions.get("window");
+
+const PRIVACY_URL =
+  "https://claude.ai/code/artifact/2c0f8766-02a4-45df-9003-905e73080ad9";
+const TERMS_URL =
+  "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 
 const FEATURES = [
   { icon: "♾️", text: "Sınırsız kelime öğrenme", premium: true },
@@ -295,6 +301,16 @@ export default function PaywallScreen({ navigation }) {
           <Text style={styles.restoreText}>Satın Alımı Geri Yükle</Text>
         </TouchableOpacity>
 
+        <View style={styles.legalRow}>
+          <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)}>
+            <Text style={styles.legalLink}>Kullanım Koşulları (EULA)</Text>
+          </TouchableOpacity>
+          <Text style={styles.legalSeparator}>•</Text>
+          <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)}>
+            <Text style={styles.legalLink}>Gizlilik Politikası</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={{ height: SPACING.xxxl }} />
       </ScrollView>
     </SafeAreaView>
@@ -459,6 +475,18 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
   },
+  legalRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: SPACING.sm,
+  },
+  legalLink: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZES.xs,
+    textDecorationLine: "underline",
+  },
+  legalSeparator: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
   restoreButton: { alignItems: "center", paddingVertical: SPACING.md },
   restoreText: {
     color: COLORS.textSecondary,

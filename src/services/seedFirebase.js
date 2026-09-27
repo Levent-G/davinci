@@ -11,26 +11,26 @@ export const seedWordsToFirebase = async (onProgress) => {
   let uploaded = 0;
 
   try {
-    // Önce mevcut kelimeleri sil (isteğe bağlı)
-    // const existing = await firestore().collection('words').get();
-    // const deleteBatch = firestore().batch();
-    // existing.docs.forEach(doc => deleteBatch.delete(doc.ref));
-    // await deleteBatch.commit();
-
-    // Batch'ler halinde yükle
+    // Batch'ler halinde yükle. merge:true kullanıyoruz — böylece admin
+    // panelinden daha önce ayarlanmış bir imageUrl varsa (bkz.
+    // AdminEditWordScreen), yeniden seed edildiğinde silinmez.
     for (let i = 0; i < total; i += BATCH_SIZE) {
       const batch = firestore().batch();
       const chunk = ALL_WORDS.slice(i, i + BATCH_SIZE);
 
       chunk.forEach((word) => {
         const ref = firestore().collection('words').doc(word.id);
-        batch.set(ref, {
-          ...word,
-          createdAt: firestore.FieldValue.serverTimestamp(),
-          masteryLevel: 0,
-          timesShown: 0,
-          timesCorrect: 0,
-        });
+        batch.set(
+          ref,
+          {
+            ...word,
+            createdAt: firestore.FieldValue.serverTimestamp(),
+            masteryLevel: 0,
+            timesShown: 0,
+            timesCorrect: 0,
+          },
+          { merge: true }
+        );
       });
 
       await batch.commit();

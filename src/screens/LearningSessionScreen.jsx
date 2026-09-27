@@ -34,9 +34,9 @@ import { speakWord } from "../utils/textToSpeech";
 import { hapticSuccess, hapticError } from "../utils/haptics";
 import { markCompleted } from "../utils/sessionBridge";
 import { scheduleAllReviews } from "../utils/notifications";
+import { getWordPhotos } from "../services/wordPhotos";
 
 const { width } = Dimensions.get("window");
-const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
 
 const STAGES = [
   { id: 0, name: "Merak", icon: "🔍", color: "#F5A623" },
@@ -68,44 +68,44 @@ export default function LearningSessionScreen({ navigation, route }) {
   const [repeatCount, setRepeatCount] = useState(0);
   const [quizOpts, setQuizOpts] = useState([]);
   const [quizAnswer, setQuizAnswer] = useState(null);
-  const [photos, setPhotos] = useState([]);
+  const [photos, setPhotos] = useState([]); // Kelimenin Firebase'deki kalıcı foto havuzu (URL dizisi)
   const [photoIdx, setPhotoIdx] = useState(0);
   const [photoRefreshed, setPhotoRefreshed] = useState(false);
   const [imgLoading, setImgLoading] = useState(false);
-  const imageUri = photos[photoIdx]?.src?.medium || null;
+  const imageUri = photos[photoIdx] || null;
 
   const stageRef = useRef(0);
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!word) return;
-    if (stage === 1) loadImage(word.word);
+    if (stage === 1) loadImage();
     if (stage === 4) setQuizOpts(generateQuizOptions(word, allWords));
   }, [stage]);
 
-  const loadImage = async (w) => {
+  // Önce kelimenin Firebase'deki kalıcı foto havuzuna bakar (admin panelinden
+  // ya da başka bir kullanıcının cihazından daha önce dolduysa Pexels'e hiç
+  // sorulmaz); havuz boşsa (bu kelime ilk kez görülüyorsa) Pexels'ten çekip
+  // bir daha hiç sorulmamak üzere Firebase'e kalıcı olarak kaydeder.
+  const loadImage = async () => {
     setImgLoading(true);
     try {
-      const res = await fetch(
-        `https://api.pexels.com/v1/search?query=${encodeURIComponent(
-          w
-        )}&per_page=3`,
-        { headers: { Authorization: PEXELS_KEY } }
-      );
-      const data = await res.json();
-      if (data.photos?.length > 0) setPhotos(data.photos);
+      const result = await getWordPhotos(word);
+      setPhotos(result.photos);
+      const idx = result.activeUrl ? result.photos.indexOf(result.activeUrl) : 0;
+      setPhotoIdx(idx >= 0 ? idx : 0);
     } catch {
     } finally {
       setImgLoading(false);
     }
   };
 
-  // Kelimeyi ilk gördüğünde, fotoğraf beğenilmezse SADECE BİR KEZ farklı
-  // bir fotoğrafa geçilebilir (zaten çekilmiş 2. sonuca geçiliyor — ekstra
-  // ağ isteği yok).
+  // Kelimeyi ilk gördüğünde, fotoğraf beğenilmezse SADECE BİR KEZ havuzdaki
+  // bir sonraki fotoğrafa geçilebilir (zaten çekilmiş, ekstra ağ isteği yok).
   const refreshPhoto = () => {
     if (photoRefreshed || photos.length < 2) return;
-    setPhotoIdx(1);
+    const nextIdx = (photoIdx + 1) % photos.length;
+    setPhotoIdx(nextIdx);
     setPhotoRefreshed(true);
     // Seçilen fotoğrafı kelimenin ilerleme kaydına yazıyoruz — tekrar
     // ekranı ve diğer ekranlar kendi Pexels sorgusunu atıp her zaman ilk
@@ -113,7 +113,7 @@ export default function LearningSessionScreen({ navigation, route }) {
     if (word) {
       actions.updateWordProgress(word.id, {
         ...(state.wordProgress[word.id] || {}),
-        photoUri: photos[1].src.medium,
+        photoUri: photos[nextIdx],
       });
     }
   };

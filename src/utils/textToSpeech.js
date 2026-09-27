@@ -13,6 +13,12 @@ import * as Speech from "expo-speech";
 // kullanıcının ilk gerçek tıklaması artık hızlı çalışıyor.
 let warmedUp = false;
 
+// iOS: varsayılan olarak konuşma uygulamanın ses oturumunu kullanır ve
+// telefonun SESSİZ modunda (zil anahtarı kapalı) hiç ses çıkmaz. false
+// verilince sistem konuşma için ayrı bir ses oturumu açar ve sessiz modda
+// da duyulur (Android'de yok sayılır).
+const SESSION = { useApplicationAudioSession: false };
+
 export function warmUpSpeech(language = "en-US") {
   if (warmedUp) return;
   warmedUp = true;
@@ -22,6 +28,7 @@ export function warmUpSpeech(language = "en-US") {
       pitch: 1.0,
       rate: 1.0,
       volume: 0, // duyulmasın
+      ...SESSION,
       onError: () => {}, // ısınma sırasında hata sessizce yutulur
     });
   } catch {
@@ -35,6 +42,7 @@ export function speakWord(word, language = "en-US") {
     language,
     pitch: 1.0,
     rate: 0.85,
+    ...SESSION,
     onError: (e) => console.warn("TTS error:", e),
   });
 }
@@ -45,6 +53,7 @@ export function speakSentence(sentence, language = "en-US") {
     language,
     pitch: 1.0,
     rate: 0.9,
+    ...SESSION,
   });
 }
 

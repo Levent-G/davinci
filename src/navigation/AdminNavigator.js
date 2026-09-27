@@ -4,6 +4,7 @@ import { createStackNavigator } from "@react-navigation/stack";
 import AdminLoginScreen from "../screens/admin/AdminLoginScreen";
 import AdminDashboardScreen from "../screens/admin/AdminDashboardScreen";
 import AdminWordsScreen from "../screens/admin/AdminWordsScreen";
+import AdminEditWordScreen from "../screens/admin/AdminEditWordScreen";
 import AdminUsersScreen from "../screens/admin/AdminUsersScreen";
 import AdminSubsScreen from "../screens/admin/AdminSubsScreen";
 import AdminAnalyticsScreen from "../screens/admin/AdminAnalyticsScreen";
@@ -16,6 +17,7 @@ export default function AdminNavigator() {
       <Stack.Screen name="AdminLogin" component={AdminLoginScreen} />
       <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       <Stack.Screen name="AdminWords" component={AdminWordsScreen} />
+      <Stack.Screen name="AdminEditWord" component={AdminEditWordScreen} />
       <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
       <Stack.Screen name="AdminSubs" component={AdminSubsScreen} />
       <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />

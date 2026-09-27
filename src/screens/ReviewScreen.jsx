@@ -30,9 +30,9 @@ import {
   cancelReviewNotifications,
   scheduleReviewNotification,
 } from "../utils/notifications";
+import { getWordPhotos } from "../services/wordPhotos";
 
 const { width } = Dimensions.get("window");
-const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
 
 export default function ReviewScreen({ navigation, route }) {
   const { words = [], reviewType = "r1" } = route.params || {};
@@ -72,8 +72,15 @@ export default function ReviewScreen({ navigation, route }) {
     if (savedPhoto) {
       setImageUri(savedPhoto);
       setImgLoading(false);
+    } else if (word.imageUrl) {
+      // Kelimenin Firebase'deki kalıcı foto havuzunda zaten bir aktif
+      // fotoğraf varsa (admin panelinden ya da daha önce başka bir
+      // kullanıcının cihazında ilk kez çekilip kaydedilmişse), Pexels'e
+      // hiç sorulmadan doğrudan o kullanılır.
+      setImageUri(word.imageUrl);
+      setImgLoading(false);
     } else {
-      loadImage(word.word);
+      loadImage(word);
     }
     Animated.sequence([
       Animated.timing(fadeAnim, {
@@ -118,18 +125,15 @@ export default function ReviewScreen({ navigation, route }) {
     })();
   }, [done]);
 
+  // Önce kelimenin Firebase'deki kalıcı foto havuzuna bakar; havuz boşsa
+  // (bu kelime ilk kez görülüyorsa) Pexels'ten çekip bir daha hiç
+  // sorulmamak üzere Firebase'e kalıcı olarak kaydeder.
   const loadImage = async (w) => {
     setImageUri(null);
     setImgLoading(true);
     try {
-      const res = await fetch(
-        `https://api.pexels.com/v1/search?query=${encodeURIComponent(
-          w
-        )}&per_page=3`,
-        { headers: { Authorization: PEXELS_KEY } }
-      );
-      const data = await res.json();
-      if (data.photos?.length > 0) setImageUri(data.photos[0].src.medium);
+      const result = await getWordPhotos(w);
+      if (result.activeUrl) setImageUri(result.activeUrl);
     } catch {
     } finally {
       setImgLoading(false);

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Animated,
   Vibration,
+  ActivityIndicator,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,20 +37,24 @@ export default function AdminLoginScreen({ navigation }) {
   }, [pin]);
 
   const handlePress = (digit) => {
-    if (pin.length >= PIN_LENGTH) return;
+    if (loading || pin.length >= PIN_LENGTH) return;
     setError("");
     setPin((prev) => prev + digit);
   };
 
-  const handleDelete = () => setPin((prev) => prev.slice(0, -1));
+  const handleDelete = () => {
+    if (loading) return;
+    setPin((prev) => prev.slice(0, -1));
+  };
 
   const handleSubmit = async (currentPin) => {
     setLoading(true);
     const valid = await verifyAdminPin(currentPin);
-    setLoading(false);
     if (valid) {
+      // Yükleniyor ekranı, panel açılana kadar görünür kalır.
       navigation.replace("AdminDashboard");
     } else {
+      setLoading(false);
       setError("Yanlış PIN. Tekrar dene.");
       Vibration.vibrate([0, 80, 80, 80]);
       Animated.sequence([
@@ -167,10 +172,18 @@ export default function AdminLoginScreen({ navigation }) {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.cancelBtn}
+          disabled={loading}
         >
           <Text style={styles.cancelText}>İptal</Text>
         </TouchableOpacity>
       </Animated.View>
+
+      {loading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Giriş yapılıyor...</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -248,6 +261,19 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     fontSize: FONT_SIZES.xxl,
     fontWeight: "300",
+  },
+
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(10,14,26,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: SPACING.md,
+  },
+  loadingText: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.md,
+    fontWeight: "600",
   },
 
   cancelBtn: { paddingVertical: SPACING.md, paddingHorizontal: SPACING.xl },
