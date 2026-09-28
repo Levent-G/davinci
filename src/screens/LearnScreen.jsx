@@ -36,7 +36,16 @@ const LEVEL_COLORS = {
 
 export default function LearnScreen({ navigation, route }) {
   const { state, actions } = useApp();
-  const [selectedLevel, setSelectedLevel] = useState("A1");
+  // DÜZELTME: sabit "A1" varsayılanı, kullanıcının onboarding'deki seviye
+  // testi sonucunu (state.user.settings / state.settings) hiç okumuyordu —
+  // Learn sekmesi tab navigator'da hiç unmount olmadığı için, doğrudan bu
+  // sekmeye dokunan bir C1 kullanıcısı hep A1 kelimeleriyle karşılaşıyordu.
+  const [selectedLevel, setSelectedLevel] = useState(
+    () =>
+      state.user?.settings?.preferredLevel ||
+      state.settings?.preferredLevel ||
+      "A1"
+  );
   const [tick, setTick] = useState(0);
 
   useFocusEffect(

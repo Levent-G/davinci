@@ -75,8 +75,6 @@ export const COLLECTIONS = {
   ADMIN: "admin",
 };
 
-export const ADMIN_PIN = "1453";
-
 /* ═══════════════════════════════════════════
    KULLANICI İŞLEMLERİ
 ═══════════════════════════════════════════ */
@@ -444,47 +442,6 @@ export async function getWeeklySessionData() {
   }
 }
 
-/* ═══════════════════════════════════════════
-   ADMIN AUTH
-═══════════════════════════════════════════ */
-
-export async function verifyAdminPin(pin) {
-  const fallback = pin === ADMIN_PIN;
-  const remoteCheck = (async () => {
-    try {
-      await ensureFirebaseReady();
-      const snap = await firestore()
-        .collection(COLLECTIONS.ADMIN)
-        .doc("config")
-        .get();
-      if (snap.exists && snap.data().pin) {
-        return snap.data().pin === pin;
-      }
-      return fallback;
-    } catch {
-      return fallback;
-    }
-  })();
-  // Ağ yoksa/yavaşsa giriş ekranı sonsuza kadar beklemesin.
-  const timeout = new Promise((resolve) =>
-    setTimeout(() => resolve(fallback), 6000)
-  );
-  return Promise.race([remoteCheck, timeout]);
-}
-
-export async function updateAdminPin(newPin) {
-  try {
-    await ensureFirebaseReady();
-    await firestore()
-      .collection(COLLECTIONS.ADMIN)
-      .doc("config")
-      .set({ pin: newPin }, { merge: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export default {
   getAllUsers,
   getUserStats,
@@ -501,7 +458,5 @@ export default {
   saveUserProgress,
   getAppAnalytics,
   getWeeklySessionData,
-  verifyAdminPin,
-  updateAdminPin,
   COLLECTIONS,
 };

@@ -1,5 +1,5 @@
 // src/screens/ProfileScreen.jsx
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import { useSubscription } from "../context/SubscriptionContext";
 import { saveUser } from "../services/firebase";
+import { isAdminEmail } from "../services/auth";
 import {
   scheduleDailyReminder,
   cancelAllNotifications,
@@ -33,6 +34,46 @@ export default function ProfileScreen({ navigation }) {
   const settings = state.settings;
   const user = state.user;
   const trialStatus = subActions.getTrialStatus();
+  const isAdmin = isAdminEmail(state.authUser?.email);
+
+  const handleSignOut = () => {
+    Alert.alert("Çıkış Yap", "Hesabından çıkış yapmak istediğine emin misin?", [
+      { text: "İptal", style: "cancel" },
+      {
+        text: "Çıkış Yap",
+        style: "destructive",
+        onPress: () => actions.signOut(),
+      },
+    ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Hesabı Sil",
+      "Hesabın ve tüm verilerin kalıcı olarak silinecek. Bu işlem geri alınamaz.",
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: "Hesabı Sil",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await actions.deleteAccount();
+            } catch (e) {
+              if (e?.code === "auth/requires-recent-login") {
+                Alert.alert(
+                  "Tekrar Giriş Gerekiyor",
+                  "Güvenlik nedeniyle hesabını silmeden önce çıkış yapıp tekrar giriş yapman gerekiyor."
+                );
+              } else {
+                Alert.alert("Hata", e?.message || "Hesap silinemedi.");
+              }
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleUpdateSetting = async (key, value) => {
     await actions.updateSettings({ [key]: value });
@@ -265,6 +306,28 @@ export default function ProfileScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Admin — sadece yetkili email'lere görünür */}
+        {isAdmin && (
+          <View style={styles.section}>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate("Admin")}
+            >
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={18}
+                color={COLORS.accent}
+              />
+              <Text style={styles.adminButtonText}>Admin Paneli</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={16}
+                color={COLORS.textMuted}
+              />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Danger Zone */}
         <View style={styles.section}>
           <TouchableOpacity
@@ -274,10 +337,27 @@ export default function ProfileScreen({ navigation }) {
             <Ionicons name="trash-outline" size={18} color={COLORS.error} />
             <Text style={styles.dangerButtonText}>Verileri Sıfırla</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dangerButton, { marginTop: SPACING.sm }]}
+            onPress={handleSignOut}
+          >
+            <Ionicons name="log-out-outline" size={18} color={COLORS.error} />
+            <Text style={styles.dangerButtonText}>Çıkış Yap</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dangerButton, { marginTop: SPACING.sm }]}
+            onPress={handleDeleteAccount}
+          >
+            <Ionicons
+              name="person-remove-outline"
+              size={18}
+              color={COLORS.error}
+            />
+            <Text style={styles.dangerButtonText}>Hesabımı Sil</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Version */}
-        <AdminSecretButton navigation={navigation} />
         <Text style={styles.version}>DaVinci Words v1.0.0</Text>
         <View style={{ height: SPACING.xxxl }} />
       </ScrollView>
@@ -541,6 +621,22 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.md,
     fontWeight: "600",
   },
+  adminButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    backgroundColor: COLORS.accentGlow,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "30",
+  },
+  adminButtonText: {
+    flex: 1,
+    color: COLORS.accent,
+    fontSize: FONT_SIZES.md,
+    fontWeight: "700",
+  },
   dangerButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -611,31 +707,3 @@ const styles = StyleSheet.create({
   },
   modalSaveText: { color: "#fff", fontWeight: "700" },
 });
-
-// Gizli admin erişimi — versiyon yazısının üstüne 5 kez hızlı dokun
-function AdminSecretButton({ navigation }) {
-  const tapCount = useRef(0);
-  const tapTimer = useRef(null);
-
-  const handleTap = () => {
-    tapCount.current += 1;
-    clearTimeout(tapTimer.current);
-    tapTimer.current = setTimeout(() => {
-      tapCount.current = 0;
-    }, 2000);
-    if (tapCount.current >= 5) {
-      tapCount.current = 0;
-      navigation.navigate("Admin");
-    }
-  };
-
-  return (
-    <TouchableOpacity
-      onPress={handleTap}
-      style={{ paddingVertical: 8, alignItems: "center" }}
-      activeOpacity={1}
-    >
-      <Text style={{ color: "transparent", fontSize: 1 }}>admin</Text>
-    </TouchableOpacity>
-  );
-}

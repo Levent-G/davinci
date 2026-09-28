@@ -50,12 +50,20 @@
         }
       ],
       "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "expo-apple-authentication",
       [
         "expo-build-properties",
         {
           "ios": {
             "useFrameworks": "static"
           }
+        }
+      ],
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.502687781194-lu1rrn50f30f8ie2e1c1ffo6qd4n825b"
         }
       ]
     ],

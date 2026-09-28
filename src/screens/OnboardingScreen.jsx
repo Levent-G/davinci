@@ -93,16 +93,16 @@ const SLIDES = [
 ];
 
 export default function OnboardingScreen({ navigation }) {
-  const { actions } = useApp();
+  const { state, actions } = useApp();
   const [step, setStep] = useState("slides"); // slides | name | level_test | result
   const [slideIndex, setSlideIndex] = useState(0);
-  const [userName, setUserName] = useState("");
+  // Google/Apple girişinden gelen adı öneri olarak dolduruyoruz — kullanıcı
+  // isterse değiştirebilir.
+  const [userName, setUserName] = useState(state.authUser?.displayName || "");
   const [testIndex, setTestIndex] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [selectedAnswer, setSelected] = useState(null);
-  const [tappedAdmin, setTappedAdmin] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const tapTimer = useRef(null);
 
   const animateTransition = (callback) => {
     Animated.sequence([
@@ -120,27 +120,19 @@ export default function OnboardingScreen({ navigation }) {
     setTimeout(callback, 200);
   };
 
-  const handleAdminTap = () => {
-    const newCount = tappedAdmin + 1;
-    setTappedAdmin(newCount);
-    clearTimeout(tapTimer.current);
-    tapTimer.current = setTimeout(() => setTappedAdmin(0), 2000);
-    if (newCount >= 3) {
-      setTappedAdmin(0);
-      navigation.navigate("Admin");
-    }
-  };
-
   // Seviye testi sonucunu hesapla
   const calculateLevel = (answers) => {
     let score = 0;
     answers.forEach((ans, i) => {
       if (ans === LEVEL_QUESTIONS[i].answer) score++;
     });
-    if (score >= 5) return "C1";
-    if (score >= 4) return "B2";
-    if (score >= 3) return "B1";
-    if (score >= 2) return "A2";
+    // DÜZELTME: C2 hiçbir puanla ulaşılamıyordu (en yüksek dilim C1'de
+    // tavan yapıyordu) — 5 üzerinden tam puan artık C2'ye karşılık geliyor.
+    if (score >= 5) return "C2";
+    if (score >= 4) return "C1";
+    if (score >= 3) return "B2";
+    if (score >= 2) return "B1";
+    if (score >= 1) return "A2";
     return "A1";
   };
 
@@ -159,20 +151,29 @@ export default function OnboardingScreen({ navigation }) {
   };
 
   const handleFinish = async (level) => {
+    const settings = {
+      preferredLevel: level,
+      dailyGoal: 10,
+      sessionSize: 5,
+      notifications: true,
+      soundEnabled: true,
+    };
     const profile = {
-      id: `user_${Date.now()}`,
+      // Google/Apple ile giriş zorunlu olduğu için kimlik artık Firebase
+      // Auth'un uid'si — böylece bu hesap başka bir cihazda giriş yaptığında
+      // da aynı kullanıcı olarak eşleşir (Firestore'da users/{uid}).
+      id: state.authUser?.uid || `user_${Date.now()}`,
       name: userName.trim() || "Öğrenci",
-      email: "",
-      avatar: null,
-      settings: {
-        preferredLevel: level,
-        dailyGoal: 10,
-        sessionSize: 5,
-        notifications: true,
-        soundEnabled: true,
-      },
+      email: state.authUser?.email || "",
+      avatar: state.authUser?.photoURL || null,
+      settings,
     };
     await actions.setUser(profile);
+    // DÜZELTME: setUser sadece profile.settings'i (state.user içinde) yazıyor.
+    // Kanonik ayar kaynağı state.settings ise ve buraya hiç yazılmıyordu —
+    // ProfileScreen ("Seviye: ...") ve önceden LearnScreen bu yüzden seviye
+    // testi sonucunu hiç görmüyor, hep varsayılan A1'de kalıyordu.
+    await actions.updateSettings(settings);
     await actions.setOnboardingDone();
   };
 
@@ -192,9 +193,7 @@ export default function OnboardingScreen({ navigation }) {
               <Text style={styles.skipText}>Atla</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={handleAdminTap} activeOpacity={1}>
-              <Text style={styles.slideIcon}>{slide.icon}</Text>
-            </TouchableOpacity>
+            <Text style={styles.slideIcon}>{slide.icon}</Text>
             <Text style={styles.slideTitle}>{slide.title}</Text>
             <Text style={styles.slideSubtitle}>{slide.subtitle}</Text>
             <Text style={styles.slideDesc}>{slide.description}</Text>

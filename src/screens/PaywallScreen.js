@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from "../utils/theme";
 import { useSubscription } from "../context/SubscriptionContext";
-import { isPurchasesConfigured } from "../services/purchases";
+import { isPurchasesConfigured, getPurchasesDiagnostics } from "../services/purchases";
 
 const { width } = Dimensions.get("window");
 
@@ -83,6 +83,23 @@ export default function PaywallScreen({ navigation }) {
       setOfferingPackages(pkgs);
       const annual = pkgs.find((p) => p.packageType === "ANNUAL");
       setSelectedPkg(annual || pkgs[0] || null);
+      if (pkgs.length === 0) {
+        const d = getPurchasesDiagnostics();
+        Alert.alert(
+          "Teklif Tanılama (geçici)",
+          [
+            `configured: ${d.configured}`,
+            `hasApiKey: ${d.hasApiKey}`,
+            d.lastConfigureError ? `configureError: ${d.lastConfigureError}` : null,
+            d.lastOfferingsError ? `offeringsError: ${d.lastOfferingsError}` : null,
+            d.lastOfferingsDebug
+              ? `debug: ${JSON.stringify(d.lastOfferingsDebug)}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+      }
     })();
   }, []);
 

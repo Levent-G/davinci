@@ -34,6 +34,7 @@ import { speakWord } from "../utils/textToSpeech";
 import { hapticSuccess, hapticError } from "../utils/haptics";
 import { markCompleted } from "../utils/sessionBridge";
 import { scheduleAllReviews } from "../utils/notifications";
+import * as Notifications from "expo-notifications";
 import { getWordPhotos } from "../services/wordPhotos";
 
 const { width } = Dimensions.get("window");
@@ -149,11 +150,22 @@ export default function LearningSessionScreen({ navigation, route }) {
         // örn. 2 kelime bitirip çıkıldığında bile "1. Tekrar" bildirimi
         // erkenden gelirdi.
         const batchInPlay = getBatchInPlayCount(allWords, mergedProgress);
+        console.log(
+          `[review-notif] batchInPlay=${batchInPlay} target=${DAILY_TARGET}`
+        );
         if (batchInPlay >= DAILY_TARGET) {
           const pendingCount = getInFlightReviewCount(mergedProgress);
           await scheduleAllReviews(pendingCount || 1, HOUR);
+          const scheduled =
+            await Notifications.getAllScheduledNotificationsAsync();
+          console.log(
+            `[review-notif] scheduled OK, pendingCount=${pendingCount}, total scheduled=${scheduled.length}`,
+            scheduled.map((s) => s.identifier)
+          );
         }
-      } catch {}
+      } catch (e) {
+        console.log("[review-notif] HATA:", e?.message || e);
+      }
     }
     markCompleted();
     navigation.goBack();

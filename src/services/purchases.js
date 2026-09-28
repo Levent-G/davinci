@@ -25,6 +25,9 @@ const REVENUECAT_API_KEYS = {
 export const PREMIUM_ENTITLEMENT_ID = "premium";
 
 let configured = false;
+let lastConfigureError = null;
+let lastOfferingsError = null;
+let lastOfferingsDebug = null;
 
 function hasRealApiKey() {
   const key = Platform.select(REVENUECAT_API_KEYS);
@@ -34,6 +37,7 @@ function hasRealApiKey() {
 export function configurePurchases(appUserId) {
   if (configured) return;
   if (!hasRealApiKey()) {
+    lastConfigureError = "no_api_key";
     console.warn(
       "[purchases] RevenueCat API anahtarı ayarlanmamış — src/services/purchases.js içine gerçek anahtarı ekleyin. Şimdilik satın alma özelliği devre dışı."
     );
@@ -46,13 +50,29 @@ export function configurePurchases(appUserId) {
       appUserID: appUserId || undefined,
     });
     configured = true;
+    lastConfigureError = null;
   } catch (e) {
+    lastConfigureError = e.message;
     console.warn("[purchases] configure failed:", e.message);
   }
 }
 
 export function isPurchasesConfigured() {
   return configured;
+}
+
+// Metro'ya bağlı bir dev-client olmadan (TestFlight üzerinden) bile gerçek
+// hatayı görebilmek için — PaywallScreen offerings boş dönerse bunu
+// Alert ile gösterir.
+export function getPurchasesDiagnostics() {
+  return {
+    platform: Platform.OS,
+    hasApiKey: hasRealApiKey(),
+    configured,
+    lastConfigureError,
+    lastOfferingsError,
+    lastOfferingsDebug,
+  };
 }
 
 // Kullanıcı giriş/oturum kimliği belli olduğunda (onboarding sonrası)
@@ -70,11 +90,31 @@ export async function loginPurchases(appUserId) {
 }
 
 export async function getOfferings() {
-  if (!configured) return null;
+  if (!configured) {
+    lastOfferingsError = lastConfigureError || "not_configured";
+    return null;
+  }
   try {
     const offerings = await Purchases.getOfferings();
+    const allIds = Object.keys(offerings.all || {});
+    lastOfferingsDebug = {
+      allOfferingsIds: allIds,
+      hasCurrent: !!offerings.current,
+      currentPackagesCount: offerings.current?.availablePackages?.length || 0,
+    };
+    if (!offerings.current) {
+      lastOfferingsError =
+        allIds.length === 0
+          ? "RevenueCat'te hiç Offering yok (Dashboard > Offerings'te bir Offering oluşturup 'Current' yapman gerekiyor)"
+          : `Offering(lar) var (${allIds.join(", ")}) ama hiçbiri 'Current' işaretli değil`;
+    } else if (!offerings.current.availablePackages?.length) {
+      lastOfferingsError = `Current offering ('${offerings.current.identifier}') içinde Package yok`;
+    } else {
+      lastOfferingsError = null;
+    }
     return offerings.current || null;
   } catch (e) {
+    lastOfferingsError = `${e.code ? e.code + ": " : ""}${e.message}`;
     console.warn("[purchases] getOfferings failed:", e.message);
     return null;
   }

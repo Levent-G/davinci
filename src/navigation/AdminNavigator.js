@@ -1,7 +1,6 @@
 // src/navigation/AdminNavigator.js
 import React from "react";
 import { createStackNavigator } from "@react-navigation/stack";
-import AdminLoginScreen from "../screens/admin/AdminLoginScreen";
 import AdminDashboardScreen from "../screens/admin/AdminDashboardScreen";
 import AdminWordsScreen from "../screens/admin/AdminWordsScreen";
 import AdminEditWordScreen from "../screens/admin/AdminEditWordScreen";
@@ -13,8 +12,10 @@ const Stack = createStackNavigator();
 
 export default function AdminNavigator() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="AdminLogin" component={AdminLoginScreen} />
+    <Stack.Navigator
+      screenOptions={{ headerShown: false }}
+      initialRouteName="AdminDashboard"
+    >
       <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       <Stack.Screen name="AdminWords" component={AdminWordsScreen} />
       <Stack.Screen name="AdminEditWord" component={AdminEditWordScreen} />

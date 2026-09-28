@@ -22,6 +22,8 @@ import {
   SHADOWS,
 } from "../../utils/theme";
 import { getAppAnalytics, getWeeklySessionData } from "../../services/firebase";
+import { useApp } from "../../context/AppContext";
+import { isAdminEmail } from "../../services/auth";
 
 const { width } = Dimensions.get("window");
 const BAR_MAX_H = 80;
@@ -41,6 +43,9 @@ const EMPTY_WEEK = ["Pzt", "Sal", "Car", "Per", "Cum", "Cmt", "Paz"].map(
 );
 
 export default function AdminDashboardScreen({ navigation }) {
+  const { state } = useApp();
+  const isAdmin = isAdminEmail(state.authUser?.email);
+
   const [analytics, setAnalytics] = useState(EMPTY_ANALYTICS);
   const [weekData, setWeekData] = useState(EMPTY_WEEK);
   const [refreshing, setRefresh] = useState(false);
@@ -102,6 +107,32 @@ export default function AdminDashboardScreen({ navigation }) {
       screen: "AdminAnalytics",
     },
   ];
+
+  // Güvenlik ağı: admin menüsü zaten sadece allowlist'teki email'lere
+  // gösteriliyor, ama bu ekrana başka bir yoldan (ör. derin link, eski bir
+  // navigasyon state'i) ulaşılırsa da içeriği göstermeyelim.
+  if (!isAdmin) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.deniedBox}>
+          <Ionicons
+            name="lock-closed-outline"
+            size={40}
+            color={COLORS.textMuted}
+          />
+          <Text style={styles.deniedText}>
+            Bu alana erişim yetkin yok.
+          </Text>
+          <TouchableOpacity
+            style={styles.deniedBackBtn}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.deniedBackText}>Geri Dön</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -384,6 +415,28 @@ function QuickRow({ icon, label, value, color }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
+  deniedBox: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.xxl,
+  },
+  deniedText: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZES.md,
+    textAlign: "center",
+  },
+  deniedBackBtn: {
+    marginTop: SPACING.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.xl,
+    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.backgroundCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  deniedBackText: { color: COLORS.textPrimary, fontWeight: "600" },
   loadingCenter: {
     flex: 1,
     alignItems: "center",

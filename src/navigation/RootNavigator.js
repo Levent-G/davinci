@@ -6,6 +6,7 @@ import { COLORS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
 import MainTabNavigator from "./MainTabNavigator";
 import AdminNavigator from "./AdminNavigator";
+import LoginScreen from "../screens/LoginScreen";
 import OnboardingScreen from "../screens/OnboardingScreen";
 import LearningSessionScreen from "../screens/LearningSessionScreen";
 import PaywallScreen from "../screens/PaywallScreen";
@@ -19,7 +20,7 @@ const Stack = createStackNavigator();
 export default function RootNavigator() {
   const { state } = useApp();
 
-  if (state.isLoading) {
+  if (state.isLoading || state.authLoading) {
     return (
       <View
         style={{
@@ -31,6 +32,16 @@ export default function RootNavigator() {
       >
         <ActivityIndicator color={COLORS.accent} size="large" />
       </View>
+    );
+  }
+
+  // Google/Apple ile giriş zorunlu — oturum yoksa hiçbir ekrana
+  // (onboarding dahil) geçilmez.
+  if (!state.authUser) {
+    return (
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Login" component={LoginScreen} />
+      </Stack.Navigator>
     );
   }
 

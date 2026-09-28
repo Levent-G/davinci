@@ -23,12 +23,19 @@ export function warmUpSpeech(language = "en-US") {
   if (warmedUp) return;
   warmedUp = true;
   try {
+    // NOT: burada ...SESSION (useApplicationAudioSession:false) KASITLI
+    // OLARAK kullanılmıyor. Bu, sistemin konuşma için ayrı bir ses oturumu
+    // açmasını sağlıyor — ki sessiz moddaki gerçek "Sesli Dinle" çağrılarında
+    // istediğimiz tam da bu. Ama bu ısıtma çağrısı volume:0 ile duyulmaz
+    // olmalıydı; ayrı oturumla birlikte kullanılınca sessiz modda bile kısa,
+    // anlaşılmaz bir ses duyulmaya başladı. Isıtma sesinin duyulmasına hiç
+    // gerek olmadığı için burada varsayılan (uygulamanın kendi) oturumu
+    // kullanıyoruz — volume:0 orada güvenilir şekilde sessiz kalıyor.
     Speech.speak(".", {
       language,
       pitch: 1.0,
       rate: 1.0,
       volume: 0, // duyulmasın
-      ...SESSION,
       onError: () => {}, // ısınma sırasında hata sessizce yutulur
     });
   } catch {

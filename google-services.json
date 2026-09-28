@@ -12,7 +12,20 @@
           "package_name": "com.davinci.words"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "502687781194-esi5h3kfbstg7g2qcvi4r6h7vrio5fo0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.davinci.words",
+            "certificate_hash": "b92ef967454d2d0b980c54ddf72b1225130fd8fd"
+          }
+        },
+        {
+          "client_id": "502687781194-bva2als1k13871ep73ovbf94j7rim8ai.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCPlVJKyqh0ibmMVDU0P2jj4OsPVjR0fOo"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "502687781194-bva2als1k13871ep73ovbf94j7rim8ai.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "502687781194-lu1rrn50f30f8ie2e1c1ffo6qd4n825b.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.davinci.words"
+              }
+            }
+          ]
         }
       }
     }

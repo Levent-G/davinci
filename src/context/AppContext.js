@@ -19,11 +19,22 @@ import {
   saveSession,
   saveUserProgress,
   getFirestoreWords,
+  deleteUser as deleteFirestoreUser,
 } from "../services/firebase";
+import {
+  onAuthStateChanged,
+  signOutUser,
+  deleteAuthAccount,
+} from "../services/auth";
 
 const AppContext = createContext(null);
 
 const initialState = {
+  // Firebase Authentication kullanıcısı (Google/Apple ile giriş zorunlu).
+  // null: henüz bilinmiyor/oturum yok. authLoading bitene kadar RootNavigator
+  // bekleme ekranı gösterir, sonra authUser yoksa LoginScreen'e düşer.
+  authUser: null,
+  authLoading: true,
   user: null,
   wordProgress: {},
   customWords: [],
@@ -57,6 +68,8 @@ function appReducer(state, action) {
       return { ...state, ...action.payload, isLoading: false };
     case "SET_USER":
       return { ...state, user: action.payload };
+    case "SET_AUTH_USER":
+      return { ...state, authUser: action.payload, authLoading: false };
     case "SET_ONBOARDING_DONE":
       return { ...state, isOnboardingDone: true };
     case "SET_FIRESTORE_WORDS":
@@ -102,7 +115,14 @@ function appReducer(state, action) {
     // manuel kapatıp yeniden açana kadar. Bu aksiyon in-memory state'i de
     // gerçek bir restart'ta ne olacaksa (initialState) aynısına döndürür.
     case "RESET_STATE":
-      return { ...initialState, isLoading: false };
+      // authUser/authLoading KORUNUR — "verileri sıfırla" oturumu kapatmaz,
+      // sadece yerel öğrenme verisini temizler.
+      return {
+        ...initialState,
+        authUser: state.authUser,
+        authLoading: false,
+        isLoading: false,
+      };
     default:
       return state;
   }
@@ -183,6 +203,26 @@ export function AppProvider({ children }) {
       }
     }
     loadInitialData();
+
+    // Firebase Authentication oturumunu dinle — giriş zorunlu (bkz.
+    // LoginScreen). Cihazda ÖNCEKİ bir hesabın yerel verisi varsa ve şimdi
+    // FARKLI bir hesapla giriş yapılmışsa (paylaşımlı cihaz senaryosu),
+    // karışmasın diye yerel veriyi temizleyip bu hesap için sıfırdan
+    // başlıyoruz.
+    const unsubscribeAuth = onAuthStateChanged(async (authUser) => {
+      if (authUser) {
+        try {
+          const localProfile = await Storage.getUserProfile();
+          if (localProfile?.id && localProfile.id !== authUser.uid) {
+            await Storage.clearAll();
+            dispatch({ type: "RESET_STATE" });
+          }
+        } catch {}
+      }
+      dispatch({ type: "SET_AUTH_USER", payload: authUser });
+    });
+
+    return () => unsubscribeAuth();
   }, []);
 
   // Firebase'den kelimeleri yükle
@@ -256,6 +296,25 @@ export function AppProvider({ children }) {
     setOnboardingDone: async () => {
       dispatch({ type: "SET_ONBOARDING_DONE" });
       await Storage.setOnboardingDone();
+    },
+
+    signOut: async () => {
+      await signOutUser();
+      // onAuthStateChanged authUser'ı null yapıp RootNavigator'ı
+      // LoginScreen'e döndürecek; yerel veriye burada dokunmuyoruz —
+      // aynı hesapla tekrar giriş yapılırsa kaldığı yerden devam eder.
+    },
+
+    // App Store Guideline 5.1.1(v): hesap oluşturmayı destekleyen bir
+    // uygulama hesabı uygulama içinden silmeyi de desteklemek zorunda.
+    deleteAccount: async () => {
+      const userId = state.user?.id;
+      if (userId) {
+        await deleteFirestoreUser(userId).catch(() => {});
+      }
+      await Storage.clearAll();
+      await deleteAuthAccount(); // authUser null olur, RootNavigator LoginScreen'e döner
+      dispatch({ type: "RESET_STATE" });
     },
 
     updateWordProgress: async (wordId, update) => {
