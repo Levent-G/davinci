@@ -1,0 +1,59 @@
+# Da Vinci Words iOS build -> TestFlight (ücretsiz: GitHub'ın Mac sunucusunda yerel EAS build)
+# Çalıştırma: GitHub > Actions > "iOS TestFlight" > Run workflow
+# Gerekli gizli anahtar: EXPO_TOKEN (expo.dev > Account settings > Access tokens)
+# Not: Actions sekmesinde görünmezse Settings > Actions > General > Allow all actions
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: En güncel kararlı Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Expo hesabı kontrolü
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN gizli anahtarı yok. Settings > Secrets and variables > Actions > New repository secret ile ekle."
+            exit 1
+          fi
+          eas whoami
+
+      - run: npm ci
+
+      # İmza sertifikaları Expo'da kayıtlı olanlardan indirilir; build numarası otomatik artar
+      - name: iOS build (yerel)
+        run: eas build --platform ios --profile production --local --non-interactive --output ${{ github.workspace }}/davinci.ipa
+
+      - name: App Store Connect'e yükle (TestFlight)
+        run: eas submit --platform ios --profile production --path ${{ github.workspace }}/davinci.ipa --non-interactive
+
+      - name: IPA dosyasını sakla
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: davinci-ipa
+          path: ${{ github.workspace }}/davinci.ipa
+          if-no-files-found: ignore
+          retention-days: 7

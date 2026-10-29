@@ -18,7 +18,10 @@ import {
   getMasteryLevel,
   getMasteryLabel,
   STATUS,
+  DAILY_TARGET,
 } from "../utils/davinciAlgorithm";
+import { getCommunityAverages } from "../services/firebase";
+import { Storage } from "../utils/storage";
 
 // "Öğrenilen" tanımı tüm ekranlarda (Home, Learn, Stats) TEK kaynaktan
 // aynı olmalı: kelime 5 aşamayı+3 tekrarı tamamlayıp "learned" olmuş ya
@@ -59,6 +62,7 @@ export default function StatsScreen({ navigation }) {
 
   const allWords = actions.getAllWords();
   const { stats, wordProgress } = state;
+  const [community, setCommunity] = useState(null);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -66,6 +70,29 @@ export default function StatsScreen({ navigation }) {
       duration: 500,
       useNativeDriver: true,
     }).start();
+  }, []);
+
+  // Topluluk ortalaması — günde sadece bir kez gerçekten ağdan çekiliyor
+  // (bkz. Storage.getCachedCommunityStats), geri kalan açılışlarda
+  // önbellekten anında gösteriliyor.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cached = await Storage.getCachedCommunityStats();
+      if (cached?.stats && !cancelled) setCommunity(cached.stats);
+      const age = cached
+        ? Date.now() - new Date(cached.fetchedAt).getTime()
+        : Infinity;
+      if (age < 24 * 60 * 60 * 1000) return; // taze, ağa gitme
+      const fresh = await getCommunityAverages();
+      if (fresh && !cancelled) {
+        setCommunity(fresh);
+        await Storage.saveCachedCommunityStats(fresh);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Haftalık aktivite ───────────────────────────────────────────────────
@@ -187,6 +214,14 @@ export default function StatsScreen({ navigation }) {
       ? Math.round((totalLearned / allWords.length) * 100)
       : 0;
 
+  // ── Öneri (günlük/haftalık hedef) ────────────────────────────────────────
+  // weekActivity[6] = bugün (bkz. üstteki döngü: i=6..0, en son push edilen
+  // i=0 yani bugün).
+  const todayCount = weekActivity[weekActivity.length - 1]?.count || 0;
+  const weekTotal = weekActivity.reduce((s, d) => s + d.count, 0);
+  const weeklyTarget = DAILY_TARGET * 7;
+  const todayRemaining = Math.max(DAILY_TARGET - todayCount, 0);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -222,6 +257,92 @@ export default function StatsScreen({ navigation }) {
             color="#A29BFE"
           />
         </Animated.View>
+
+        {/* ── Öneri ── */}
+        <LinearGradient
+          colors={[COLORS.accent, (COLORS.accentDark || COLORS.accent) + "E6"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.suggestCard}
+        >
+          <View style={styles.suggestHeaderRow}>
+            <View style={styles.suggestIconCircle}>
+              <Text style={styles.suggestIcon}>🎯</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.suggestTitle}>GÜNLÜK HEDEF</Text>
+              <Text style={styles.suggestHeadline}>
+                {todayRemaining > 0
+                  ? `${todayRemaining} kelime daha kaldı`
+                  : "Bugünkü hedef tamam! 🎉"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.suggestBarBg}>
+            <View
+              style={[
+                styles.suggestBarFill,
+                {
+                  width: `${Math.min(100, (todayCount / DAILY_TARGET) * 100)}%`,
+                },
+              ]}
+            />
+          </View>
+          <Text style={styles.suggestBarLabel}>
+            {todayCount}/{DAILY_TARGET} kelime bugün
+          </Text>
+
+          <View style={styles.suggestDivider} />
+
+          <View style={styles.suggestWeekRow}>
+            <Text style={styles.suggestWeekLabel}>Bu hafta</Text>
+            <Text style={styles.suggestWeekValue}>
+              {weekTotal}/{weeklyTarget}
+            </Text>
+          </View>
+          <View style={styles.suggestBarBg}>
+            <View
+              style={[
+                styles.suggestBarFill,
+                styles.suggestBarFillLight,
+                {
+                  width: `${Math.min(100, (weekTotal / weeklyTarget) * 100)}%`,
+                },
+              ]}
+            />
+          </View>
+        </LinearGradient>
+
+        {/* ── Topluluk Karşılaştırması ── */}
+        {community && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Topluluk Karşılaştırması</Text>
+            <View style={styles.communityCard}>
+              <CommunityRow
+                icon="📚"
+                label="Öğrenilen Kelime"
+                mine={stats.totalWordsLearned || 0}
+                avg={community.avgWordsLearned}
+              />
+              <CommunityRow
+                icon="🔥"
+                label="Günlük Seri"
+                mine={stats.streak || 0}
+                avg={community.avgStreak}
+              />
+              <CommunityRow
+                icon="🎯"
+                label="Oturum"
+                mine={stats.totalSessions || 0}
+                avg={community.avgSessions}
+              />
+            </View>
+            <Text style={styles.communityNote}>
+              {community.sampleSize} kullanıcının ortalamasına göre
+            </Text>
+          </View>
+        )}
 
         {/* ── Genel İlerleme ── */}
         <View style={styles.section}>
@@ -576,6 +697,53 @@ function SummaryRow({ label, value, color }) {
   );
 }
 
+function CommunityRow({ icon, label, mine, avg }) {
+  const isAbove = mine >= avg;
+  const max = Math.max(mine, avg, 1);
+  return (
+    <View style={styles.commRow}>
+      <View style={styles.commRowHeader}>
+        <Text style={styles.commIcon}>{icon}</Text>
+        <Text style={styles.commLabel}>{label}</Text>
+        <View
+          style={[styles.commBadge, isAbove && styles.commBadgeGood]}
+        >
+          <Text
+            style={[
+              styles.commBadgeTxt,
+              isAbove && styles.commBadgeTxtGood,
+            ]}
+          >
+            {isAbove ? "Ortalamanın üstünde" : "Ortalamanın altında"}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.commBarItem}>
+        <View style={styles.commBarBg}>
+          <View
+            style={[
+              styles.commBarFill,
+              { width: `${(mine / max) * 100}%`, backgroundColor: COLORS.accent },
+            ]}
+          />
+        </View>
+        <Text style={styles.commBarLabel}>Sen: {mine}</Text>
+      </View>
+      <View style={styles.commBarItem}>
+        <View style={styles.commBarBg}>
+          <View
+            style={[
+              styles.commBarFill,
+              { width: `${(avg / max) * 100}%`, backgroundColor: COLORS.textMuted },
+            ]}
+          />
+        </View>
+        <Text style={styles.commBarLabel}>Ortalama: {avg}</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   scroll: { paddingHorizontal: SPACING.lg },
@@ -609,6 +777,126 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.xs,
     textAlign: "center",
   },
+
+  suggestCard: {
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.xl,
+    ...SHADOWS.accent,
+  },
+  suggestHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  suggestIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  suggestIcon: { fontSize: 20 },
+  suggestTitle: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: FONT_SIZES.xs,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
+  suggestHeadline: {
+    color: "#fff",
+    fontSize: FONT_SIZES.lg,
+    fontWeight: "800",
+  },
+  suggestBarBg: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    overflow: "hidden",
+    marginBottom: 6,
+  },
+  suggestBarFill: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#fff",
+  },
+  suggestBarFillLight: { backgroundColor: "rgba(255,255,255,0.85)" },
+  suggestBarLabel: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: FONT_SIZES.xs,
+    fontWeight: "600",
+  },
+  suggestDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    marginVertical: SPACING.md,
+  },
+  suggestWeekRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  suggestWeekLabel: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: FONT_SIZES.sm,
+    fontWeight: "600",
+  },
+  suggestWeekValue: { color: "#fff", fontSize: FONT_SIZES.sm, fontWeight: "800" },
+
+  communityCard: {
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    gap: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  communityNote: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZES.xs,
+    textAlign: "center",
+    marginTop: SPACING.sm,
+  },
+  commRow: { gap: 6 },
+  commRowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.xs,
+    marginBottom: 2,
+  },
+  commIcon: { fontSize: 15 },
+  commLabel: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.sm,
+    fontWeight: "700",
+    flex: 1,
+  },
+  commBadge: {
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 2,
+    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.backgroundCardLight,
+  },
+  commBadgeGood: { backgroundColor: COLORS.successGlow },
+  commBadgeTxt: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  commBadgeTxtGood: { color: COLORS.success },
+  commBarItem: { gap: 3 },
+  commBarBg: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.border,
+    overflow: "hidden",
+  },
+  commBarFill: { height: 6, borderRadius: 3 },
+  commBarLabel: { color: COLORS.textMuted, fontSize: 10, fontWeight: "600" },
 
   section: { marginBottom: SPACING.xl },
   sectionTitle: {

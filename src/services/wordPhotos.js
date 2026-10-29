@@ -5,6 +5,7 @@
 // tekrar Pexels'e sormamak üzere kaydedilir — hem admin panelinden hem de
 // öğrenme/tekrar ekranlarından çağrılan tek, paylaşılan kaynak budur.
 import firestore from "@react-native-firebase/firestore";
+import { File, Directory, Paths } from "expo-file-system";
 import { COLLECTIONS, ensureFirebaseReady } from "./firebase";
 
 const PEXELS_KEY = "Aqz9qqAJP1i5YMNmDzrPIm2TXAV8xnaMKF6KgZu43vBcREZ5sd15GMb9";
@@ -73,6 +74,43 @@ export async function getWordPhotos(word) {
     }
   }
   return { photos: fetched, activeUrl: fetched[0] || null };
+}
+
+// ─── YEREL FOTOĞRAF ÖNBELLEĞİ (offline tekrar için) ─────────────────────
+// Bir kelime 5 aşamalı öğrenmeyi bitirip tekrar döngüsüne girdiğinde,
+// fotoğrafı sadece bir URL olarak değil, cihaza GERÇEKTEN indirilip
+// kaydediliyor — böylece tekrar (review) ekranında internet olmasa bile
+// fotoğraf görünmeye devam ediyor. Henüz öğrenilmemiş (yeni) kelimeler için
+// bu yapılmıyor; onlar için internet gerekiyor (bkz. LearningSessionScreen).
+function getLocalPhotoFile(wordId) {
+  return new File(Paths.document, "word_photos", `${wordId}.jpg`);
+}
+
+export function getLocalCachedPhotoUri(wordId) {
+  try {
+    const file = getLocalPhotoFile(wordId);
+    return file.exists ? file.uri : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function cacheWordPhotoLocally(wordId, remoteUrl) {
+  if (!wordId || !remoteUrl) return null;
+  try {
+    const file = getLocalPhotoFile(wordId);
+    if (file.exists) return file.uri;
+    const dir = new Directory(Paths.document, "word_photos");
+    if (!dir.exists) dir.create({ idempotent: true, intermediates: true });
+    const downloaded = await File.downloadFileAsync(remoteUrl, file, {
+      idempotent: true,
+    });
+    return downloaded.uri;
+  } catch {
+    // Offline ya da indirme başarısız — sessizce geç, review ekranı
+    // uzak URL'e düşmeye devam eder.
+    return null;
+  }
 }
 
 // Havuza yeni bir fotoğraf ekler (admin galeriden yüklediğinde) ve onu aktif yapar.

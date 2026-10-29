@@ -1,5 +1,5 @@
 // src/screens/ProfileScreen.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { isAdminEmail } from "../services/auth";
 import {
   scheduleDailyReminder,
   cancelAllNotifications,
+  getNotificationPermissionStatus,
 } from "../utils/notifications";
 
 export default function ProfileScreen({ navigation }) {
@@ -30,6 +31,14 @@ export default function ProfileScreen({ navigation }) {
   const { state: subState, actions: subActions } = useSubscription();
   const [showNameModal, setShowNameModal] = useState(false);
   const [nameInput, setNameInput] = useState(state.user?.name || "");
+  const [notifPermission, setNotifPermission] = useState(null);
+
+  // Uygulama içi "Bildirimler" açık olsa bile, iOS/Android sistem
+  // ayarlarından kapatılmışsa hiçbir bildirim gösterilmez (sessiz başarısızlık
+  // — kod hata vermez). Bunu fark edip kullanıcıyı uyarmak için kontrol ediyoruz.
+  useEffect(() => {
+    getNotificationPermissionStatus().then(setNotifPermission).catch(() => {});
+  }, []);
 
   const settings = state.settings;
   const user = state.user;
@@ -212,7 +221,7 @@ export default function ProfileScreen({ navigation }) {
             >
               <Ionicons name="lock-closed" size={20} color={COLORS.error} />
               <Text style={styles.expiredText}>
-                Deneme süresi bitti - Günde 10 kelime limiti
+                Deneme süresi bitti - Günde 2 kelime limiti
               </Text>
               <Text style={styles.expiredLink}>Premium Al →</Text>
             </TouchableOpacity>
@@ -268,6 +277,22 @@ export default function ProfileScreen({ navigation }) {
             value={settings.notifications}
             onToggle={(v) => handleUpdateSetting("notifications", v)}
           />
+          {settings.notifications && notifPermission === "denied" && (
+            <TouchableOpacity
+              style={styles.notifWarning}
+              onPress={() => Linking.openSettings()}
+            >
+              <Ionicons
+                name="warning-outline"
+                size={16}
+                color={COLORS.error}
+              />
+              <Text style={styles.notifWarningText}>
+                Telefon ayarlarında bildirim izni kapalı — bildirim
+                alamıyorsun. Açmak için dokun.
+              </Text>
+            </TouchableOpacity>
+          )}
           <SettingToggle
             label="Ses Efektleri"
             icon="volume-high"
@@ -465,6 +490,24 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   userJoined: { color: COLORS.textMuted, fontSize: FONT_SIZES.xs },
+
+  notifWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    backgroundColor: COLORS.errorGlow,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.sm,
+    marginBottom: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.error + "40",
+  },
+  notifWarningText: {
+    flex: 1,
+    color: COLORS.error,
+    fontSize: FONT_SIZES.xs,
+    fontWeight: "600",
+  },
 
   section: { marginBottom: SPACING.xl },
   sectionTitle: {

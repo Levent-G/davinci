@@ -10,6 +10,8 @@ const KEYS = {
   ONBOARDING_DONE: "@davinci_onboarding_done",
   SETTINGS: "@davinci_settings",
   DAILY_LIMIT: "@davinci_daily_limit",
+  FIRESTORE_WORDS_CACHE: "@davinci_firestore_words_cache",
+  COMMUNITY_STATS_CACHE: "@davinci_community_stats_cache",
 };
 
 export const Storage = {
@@ -171,20 +173,21 @@ export const Storage = {
   },
 
   // Abonelik
+  // DÜZELTME (KRİTİK): kayıt yoksa (ilk açılış) burada o anki zamana göre
+  // YENİ bir "7 gün" nesnesi hesaplanıp dönülüyordu ama hiçbir zaman
+  // AsyncStorage'a KAYDEDİLMİYORDU. SubscriptionContext.js'deki "kayıt
+  // yoksa oluştur ve kalıcı kaydet" bloğu bu yüzden hiç tetiklenmiyordu
+  // (sub hep "truthy" geliyordu, asla null değil) — gerçek bir abonelik
+  // kaydı diskte hiç oluşmuyordu. Sonuç: her soğuk başlatmada (cold
+  // start) deneme süresi o anki zamana göre YENİDEN hesaplanıp hep "7 gün
+  // kaldı" gösteriyordu, süre asla gerçekten azalmıyordu. Artık kayıt
+  // yoksa null dönüyor — asıl oluşturma/kaydetme işini (ve bunu SADECE
+  // bir kez yapmayı) zaten doğru şekilde üstlenen SubscriptionContext'e
+  // bırakıyoruz.
   async getSubscription() {
     try {
       const data = await AsyncStorage.getItem(KEYS.SUBSCRIPTION);
-      return data
-        ? JSON.parse(data)
-        : {
-            plan: "trial",
-            trialStartDate: new Date().toISOString(),
-            trialEndsDate: new Date(
-              Date.now() + 7 * 24 * 60 * 60 * 1000
-            ).toISOString(),
-            isActive: true,
-            isPremium: false,
-          };
+      return data ? JSON.parse(data) : null;
     } catch {
       return null;
     }
@@ -277,6 +280,58 @@ export const Storage = {
       return current + amount;
     } catch {
       return 0;
+    }
+  },
+
+  // Firestore kelime havuzu önbelleği — kelime havuzu büyüdükçe her
+  // uygulama açılışında TÜM kelimeleri yeniden Firestore'dan çekmek hem
+  // yavaşlıyor hem Firestore okuma maliyetini (kullanıcı sayısıyla
+  // çarpılarak) büyütüyor. İçerik admin tarafından ne sıklıkla
+  // değiştiğine göre günde birkaç kez değil, günde SADECE BİR KEZ gerçek
+  // bir ağ isteği yapılır — geri kalan açılışlarda bu önbellek kullanılır.
+  async getCachedFirestoreWords() {
+    try {
+      const data = await AsyncStorage.getItem(KEYS.FIRESTORE_WORDS_CACHE);
+      if (!data) return null;
+      return JSON.parse(data); // { words, fetchedAt }
+    } catch {
+      return null;
+    }
+  },
+
+  async saveCachedFirestoreWords(words) {
+    try {
+      await AsyncStorage.setItem(
+        KEYS.FIRESTORE_WORDS_CACHE,
+        JSON.stringify({ words, fetchedAt: new Date().toISOString() })
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  // Topluluk ortalaması önbelleği (İstatistikler ekranı) — aynı günlük-bir-kez
+  // mantığı: her Stats ekranı açılışında kullanıcı koleksiyonunu taramak
+  // yerine günde bir kez gerçek sorgu yapılır.
+  async getCachedCommunityStats() {
+    try {
+      const data = await AsyncStorage.getItem(KEYS.COMMUNITY_STATS_CACHE);
+      return data ? JSON.parse(data) : null; // { stats, fetchedAt }
+    } catch {
+      return null;
+    }
+  },
+
+  async saveCachedCommunityStats(stats) {
+    try {
+      await AsyncStorage.setItem(
+        KEYS.COMMUNITY_STATS_CACHE,
+        JSON.stringify({ stats, fetchedAt: new Date().toISOString() })
+      );
+      return true;
+    } catch {
+      return false;
     }
   },
 

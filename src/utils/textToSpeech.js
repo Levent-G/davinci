@@ -1,17 +1,15 @@
 // src/utils/textToSpeech.js
 import * as Speech from "expo-speech";
 
-// DÜZELTME: TTS motoru (özellikle iOS/Android native sentezleyici) ilk kez
-// çağrıldığında sesleri/motoru yükleyip hazırlıyor — bu yükleme birkaç yüz
-// ms ile birkaç saniye arası sürebiliyor. Bu gecikme kullanıcı ilk kez
-// "Sesli Dinle"ye bastığında yaşanıyordu (motor henüz "soğuk"). Sonraki
-// çağrılarda motor bellekte hazır kaldığı için gecikme olmuyordu.
-//
-// Çözüm: uygulama açılır açılmaz, kullanıcı hiçbir şeye dokunmadan, sessiz
-// (volume: 0) ve neredeyse boş bir metinle bir kez konuşma motorunu
-// "ısıtıyoruz". Gerçek gecikme burada, kullanıcı fark etmeden tüketiliyor;
-// kullanıcının ilk gerçek tıklaması artık hızlı çalışıyor.
-let warmedUp = false;
+// DÜZELTME: Daha önce burada, TTS motorunu önceden "ısıtmak" için uygulama
+// açılır açılmaz sessiz (volume:0) bir metin (".") konuşturuluyordu. Ama
+// volume:0 bazı cihazlarda/durumlarda (özellikle motorun gerçekten "soğuk"
+// olduğu ilk çağrıda) güvenilir şekilde uygulanmıyordu — kullanıcı,
+// hiçbir şeye dokunmadan, uygulamayı açar açmaz kısa bir ses duyuyordu.
+// Bu, "Sesli Dinle" demeden konuşuyor" şikayetine yol açtı. İlk tıklamadaki
+// birkaç yüz ms'lik gecikmeyi önlemek, istenmeden ses çıkmasından çok daha
+// küçük bir sorun — bu yüzden ısıtma tamamen kaldırıldı. TTS artık SADECE
+// kullanıcı "Sesli Dinle"ye bastığında konuşuyor.
 
 // iOS: varsayılan olarak konuşma uygulamanın ses oturumunu kullanır ve
 // telefonun SESSİZ modunda (zil anahtarı kapalı) hiç ses çıkmaz. false
@@ -19,29 +17,9 @@ let warmedUp = false;
 // da duyulur (Android'de yok sayılır).
 const SESSION = { useApplicationAudioSession: false };
 
-export function warmUpSpeech(language = "en-US") {
-  if (warmedUp) return;
-  warmedUp = true;
-  try {
-    // NOT: burada ...SESSION (useApplicationAudioSession:false) KASITLI
-    // OLARAK kullanılmıyor. Bu, sistemin konuşma için ayrı bir ses oturumu
-    // açmasını sağlıyor — ki sessiz moddaki gerçek "Sesli Dinle" çağrılarında
-    // istediğimiz tam da bu. Ama bu ısıtma çağrısı volume:0 ile duyulmaz
-    // olmalıydı; ayrı oturumla birlikte kullanılınca sessiz modda bile kısa,
-    // anlaşılmaz bir ses duyulmaya başladı. Isıtma sesinin duyulmasına hiç
-    // gerek olmadığı için burada varsayılan (uygulamanın kendi) oturumu
-    // kullanıyoruz — volume:0 orada güvenilir şekilde sessiz kalıyor.
-    Speech.speak(".", {
-      language,
-      pitch: 1.0,
-      rate: 1.0,
-      volume: 0, // duyulmasın
-      onError: () => {}, // ısınma sırasında hata sessizce yutulur
-    });
-  } catch {
-    // ısınma denemesi başarısız olsa bile normal akışı etkilemesin
-  }
-}
+// Geriye dönük uyumluluk için tutuluyor (App.js hâlâ çağırıyor) — artık
+// bilerek hiçbir şey yapmıyor.
+export function warmUpSpeech() {}
 
 export function speakWord(word, language = "en-US") {
   Speech.stop();

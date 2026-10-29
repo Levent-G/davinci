@@ -141,6 +141,33 @@ export default function AdminUsersScreen({ navigation }) {
     ]);
   };
 
+  // Giriş artık zorunlu olduğu için e-postasız kayıtlar (eski PIN/anonim
+  // dönemden kalma hesaplar) sisteme bir daha giremiyor — admin bunları
+  // toplu temizleyebilsin diye eklendi.
+  const noEmailUsers = users.filter((u) => !u.email);
+  const handleDeleteNoEmailUsers = () => {
+    if (noEmailUsers.length === 0) {
+      Alert.alert("Bilgi", "E-postasız kullanıcı bulunamadı.");
+      return;
+    }
+    Alert.alert(
+      "E-postasız Kullanıcıları Sil",
+      `${noEmailUsers.length} kullanıcı e-postasız görünüyor (artık giriş yapamazlar). Hepsi silinsin mi?`,
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: `${noEmailUsers.length} kullanıcıyı sil`,
+          style: "destructive",
+          onPress: async () => {
+            const ids = noEmailUsers.map((u) => u.id);
+            await Promise.all(ids.map((id) => deleteUser(id)));
+            setUsers((prev) => prev.filter((u) => u.email));
+          },
+        },
+      ]
+    );
+  };
+
   const renderUser = ({ item }) => {
     const plan = item.subscription?.plan || "free";
     const planColor = PLAN_COLORS[plan] || COLORS.textMuted;
@@ -230,6 +257,14 @@ export default function AdminUsersScreen({ navigation }) {
         <Text style={styles.headerTitle}>Kullanicilar</Text>
         <View style={styles.headerRight}>
           <Text style={styles.headerCount}>{filtered.length}</Text>
+          {noEmailUsers.length > 0 && (
+            <TouchableOpacity
+              onPress={handleDeleteNoEmailUsers}
+              style={[styles.refreshBtn, { backgroundColor: COLORS.errorGlow }]}
+            >
+              <Ionicons name="trash-outline" size={16} color={COLORS.error} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={loadUsers} style={styles.refreshBtn}>
             <Ionicons name="refresh" size={18} color={COLORS.accent} />
           </TouchableOpacity>
@@ -543,10 +578,14 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   searchInput: { flex: 1, color: COLORS.textPrimary, fontSize: FONT_SIZES.md },
-  filterRow: { flexGrow: 0, marginBottom: SPACING.sm },
+  // Sabit yükseklik verilmezse bazı cihazlarda (farklı yazı tipi
+  // ölçeklendirmesi/DPI ayarları) yatay ScrollView içeriği yüksekliği
+  // tutarsız hesaplanıyor ve chip'ler yarım kesilmiş görünüyordu.
+  filterRow: { flexGrow: 0, height: 40, marginBottom: SPACING.sm },
   filterChip: {
     paddingHorizontal: SPACING.md,
-    paddingVertical: 6,
+    height: 32,
+    justifyContent: "center",
     backgroundColor: COLORS.backgroundCard,
     borderRadius: RADIUS.full,
     borderWidth: 1,
@@ -556,6 +595,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontWeight: "600",
     fontSize: FONT_SIZES.sm,
+    includeFontPadding: false,
   },
   loadingCenter: {
     flex: 1,

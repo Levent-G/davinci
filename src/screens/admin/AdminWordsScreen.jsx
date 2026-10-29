@@ -20,6 +20,7 @@ import {
   getFirestoreWords,
   getLastWordsError,
   getLastInitError,
+  deleteFirestoreWord,
 } from "../../services/firebase";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -72,6 +73,28 @@ export default function AdminWordsScreen({ navigation }) {
       );
     }
   };
+  const handleDelete = (item) => {
+    Alert.alert(
+      "Kelimeyi Sil",
+      `"${item.word}" kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`,
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: "Sil",
+          style: "destructive",
+          onPress: async () => {
+            const ok = await deleteFirestoreWord(item.id);
+            if (ok) {
+              await actions.refreshFirestoreWords();
+            } else {
+              Alert.alert("Hata", "Kelime silinemedi, tekrar dene.");
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const levelWords = words.filter((w) => w.level === selectedLevel);
   const photographedCount = levelWords.filter((w) => w.imageUrl).length;
 
@@ -252,6 +275,17 @@ export default function AdminWordsScreen({ navigation }) {
               </View>
               <Text style={styles.catText}>{item.category}</Text>
             </View>
+            <TouchableOpacity
+              style={styles.deleteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={() => handleDelete(item)}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={18}
+                color={COLORS.error}
+              />
+            </TouchableOpacity>
             <Ionicons
               name="chevron-forward"
               size={16}
@@ -414,6 +448,14 @@ const styles = StyleSheet.create({
   },
   posText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
   catText: { color: COLORS.textMuted, fontSize: 9 },
+  deleteBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.errorGlow,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   emptyBox: { padding: SPACING.xxxl, alignItems: "center" },
   emptyText: { color: COLORS.textMuted, fontSize: FONT_SIZES.md },

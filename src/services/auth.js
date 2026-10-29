@@ -33,6 +33,7 @@ const WEB_CLIENT_ID =
 export const ADMIN_EMAILS = [
   "levent_gulsum@outlook.com",
   "burakgs.gurpinar@hotmail.com",
+  "mermiyermiermi@gmail.com",
 ];
 
 export function isAdminEmail(email) {

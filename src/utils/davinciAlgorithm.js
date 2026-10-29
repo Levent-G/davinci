@@ -109,14 +109,37 @@ export const quizOptions = generateQuizOptions;
 // true, örn. 3 yanlışla ertelenmiş) bir kelime için artık 24 saat
 // SAYMIYORUZ — takvim günü değiştiği an (gece yarısı geçince, ne kadar
 // saat geçmiş olursa olsun) tekrar hazır sayılıyor. Bkz. getRestingCount.
-export const getReviewWords = (allWords, progress) =>
+//
+// toleranceMs (varsayılan 0): farklı günlerde/zamanlarda başlamış, birbirine
+// hiç katılamamış kelime grupları zamanla bağımsız saatlerde ilerleyebiliyor
+// — biri due olup kullanıcı tekrarı bitirdikten az sonra (dakikalar içinde)
+// bir başka grup ayrıca due oluyor, art arda ama AYRI tekrar ekranları
+// çıkıyordu. toleranceMs > 0 verilince, henüz tam due olmamış ama yakın
+// zamanda (örn. 30 dk içinde) due olacak kelimeler de şimdiden dahil
+// edilir — aynı oturumda cevaplandıklarında nextReviewAt zaten o anki
+// zamana göre yeniden hesaplanacağı için (bkz. afterQuiz) bundan sonra
+// doğal olarak senkronize kalırlar. Kapasite/istatistik hesaplarında
+// (getBatchInPlayCount, getDailyStats) yanlışlıkla erken sayım olmasın diye
+// bu parametre sadece LearnScreen'in "şimdi tekrar göster" çağrısında
+// kullanılıyor, varsayılanı 0 (katı) kalıyor.
+export const getReviewWords = (allWords, progress, toleranceMs = 0) =>
   allWords.filter((w) => {
     const p = progress[w.id];
     if (p?.status !== STATUS.REVIEW) return false;
     if (p?.dayDone) return !isToday(p.updatedAt);
-    return isDue(p.nextReviewAt);
+    if (!p.nextReviewAt) return false;
+    return Date.now() + toleranceMs >= new Date(p.nextReviewAt).getTime();
   });
 export const getTodayReviewWords = getReviewWords;
+// Yakın zamanlı grupları tek oturumda toplamak için kullanılan tolerans.
+export const REVIEW_MERGE_TOLERANCE = 30 * 60 * 1000; // 30 dakika
+
+// Bugün "dokunulan" (öğrenmeye başlanan ya da biliyorum denen) yeni
+// kelime sayısı — ücretsiz kullanıcının günlük limitini kontrol etmek için.
+export const getTodayNewWordsCount = (progress) =>
+  Object.values(progress).filter(
+    (p) => p && (isToday(p.startedAt) || isToday(p.knownAt))
+  ).length;
 
 // Yeni kelimeler (hiç görülmemiş)
 export const getNewWords = (allWords, progress, level, count = 5) =>
@@ -148,6 +171,24 @@ export const hasDoneSessionToday = (progress) =>
 export const getWaitingReviewCount = (progress) =>
   Object.values(progress).filter(
     (p) => p?.status === STATUS.REVIEW && !p?.dayDone && !isDue(p?.nextReviewAt)
+  ).length;
+
+// Aynı kelimeler (sadece sayı değil) — LearnScreen'deki "Devam Et"
+// butonunun bu kelimelerin beklemesini atlayıp şimdi due yapması için.
+export const getWaitingReviewWords = (allWords, progress) =>
+  allWords.filter((w) => {
+    const p = progress[w.id];
+    return p?.status === STATUS.REVIEW && !p?.dayDone && !isDue(p?.nextReviewAt);
+  });
+
+// 5 aşamayı bitirip "hazır bekleyen" (ama günün 5'lik partisi henüz
+// tamamlanmadığı için tekrar döngüsüne SENKRON olarak henüz girmemiş)
+// kelime sayısı. LearnScreen'in günlük kota hesabına dahil edilmeli —
+// yoksa kullanıcı 3 kelime yapıp "Öğren"e tekrar basınca kota hâlâ dolu
+// görünmediği için 5 kelime DAHA istenir (partiyi 5 yerine 8'e çıkarır).
+export const getReadyForReviewCount = (progress) =>
+  Object.values(progress).filter(
+    (p) => p?.status === STATUS.LEARNING && p?.readyForReview
   ).length;
 
 // Döngüsü tamamlanıp (öğrenildi ya da 3 yanlışla ertelendi) şu an
@@ -387,10 +428,14 @@ export default {
   quizOptions,
   getReviewWords,
   getTodayReviewWords,
+  REVIEW_MERGE_TOLERANCE,
+  getTodayNewWordsCount,
   getNewWords,
   getDailyWords,
   hasDoneSessionToday,
   getWaitingReviewCount,
+  getWaitingReviewWords,
+  getReadyForReviewCount,
   getRestingCount,
   getInFlightReviewCount,
   getBatchInPlayCount,

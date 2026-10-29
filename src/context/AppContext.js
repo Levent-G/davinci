@@ -39,6 +39,14 @@ const initialState = {
   wordProgress: {},
   customWords: [],
   firestoreWords: [], // Firebase'den gelen kelimeler
+  // DÜZELTME: loadFirestoreWords() arka planda (asenkron) çalışıyor —
+  // PreScanScreen gibi ekranlar kelime havuzunu bu tamamlanmadan ÖNCE
+  // oluşturursa (ör. yavaş ağda hızlı dokunan kullanıcı), getAllWords()
+  // henüz boş firestoreWords için eski/bundled statik veriye düşüyor ve o
+  // oturumdaki kelimeler (admin'in yaptığı güncellemeler dahil) BİR DAHA
+  // hiç tazelenmiyordu (pool bir kerelik snapshot). wordsReady, ekranların
+  // bu fetch bitene kadar beklemesini sağlıyor.
+  wordsReady: false,
   stats: {
     totalWordsLearned: 0,
     totalSessions: 0,
@@ -73,7 +81,9 @@ function appReducer(state, action) {
     case "SET_ONBOARDING_DONE":
       return { ...state, isOnboardingDone: true };
     case "SET_FIRESTORE_WORDS":
-      return { ...state, firestoreWords: action.payload };
+      return { ...state, firestoreWords: action.payload, wordsReady: true };
+    case "SET_WORDS_READY":
+      return { ...state, wordsReady: true };
     case "SET_WORD_PROGRESS":
       return {
         ...state,
@@ -148,6 +158,18 @@ export function AppProvider({ children }) {
     return () => sub?.remove();
   }, []);
   const [state, dispatch] = useReducer(appReducer, initialState);
+  // DÜZELTME (istatistik yarış durumu): recordWordLearned/recordSessionComplete
+  // state.stats'i closure'dan okuyup +1 ekleyip dispatch ediyordu. Art arda
+  // hızlı çağrıldıklarında (örn. "biliyorum" ile birkaç kelimeyi art arda
+  // kaydırmak) her çağrı HENÜZ GÜNCELLENMEMİŞ aynı eski değeri okuyordu —
+  // sonuncusu öncekilerin üzerine yazıyor, net sonuç hep "+1" kalıyordu
+  // (5 kelime öğrenilse bile). statsRef, her hesaplamadan hemen sonra da
+  // güncellenerek aynı an içindeki sıradaki çağrının güncel değeri
+  // görmesini garanti ediyor.
+  const statsRef = useRef(state.stats);
+  useEffect(() => {
+    statsRef.current = state.stats;
+  }, [state.stats]);
 
   useEffect(() => {
     async function loadInitialData() {
@@ -225,15 +247,41 @@ export function AppProvider({ children }) {
     return () => unsubscribeAuth();
   }, []);
 
-  // Firebase'den kelimeleri yükle
-  const loadFirestoreWords = async () => {
+  // Firebase'den kelimeleri yükle.
+  // DÜZELTME (maliyet/hız): kelime havuzu büyüdükçe her açılışta TÜM
+  // kelimeleri yeniden çekmek hem başlangıcı yavaşlatıyor hem Firestore
+  // okuma maliyetini kullanıcı sayısıyla çarpılarak büyütüyor. Artık
+  // sadece günde bir kez gerçekten ağdan çekiliyor; aradaki açılışlarda
+  // cihazdaki önbellek kullanılıyor. forceRefresh=true (admin bir kelimeyi
+  // düzenleyip refreshFirestoreWords() çağırdığında) önbelleği atlayıp
+  // her zaman taze veri çeker.
+  const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+  const loadFirestoreWords = async (forceRefresh = false) => {
     try {
+      if (!forceRefresh) {
+        const cached = await Storage.getCachedFirestoreWords();
+        if (cached?.words?.length > 0) {
+          const age = Date.now() - new Date(cached.fetchedAt).getTime();
+          dispatch({ type: "SET_FIRESTORE_WORDS", payload: cached.words });
+          if (age < CACHE_MAX_AGE_MS) return; // taze, ağa hiç gitme
+          // Önbellek bayatlamış: kullanıcı HEMEN kelime görebilsin diye
+          // önce eski veriyi gösterdik, şimdi arka planda sessizce
+          // tazeleyip (aşağıdaki kod ile) güncelleyeceğiz.
+        }
+      }
       const words = await getFirestoreWords();
       if (words && words.length > 0) {
         dispatch({ type: "SET_FIRESTORE_WORDS", payload: words });
+        await Storage.saveCachedFirestoreWords(words);
+      } else {
+        // Firestore boş döndüyse de wordsReady'i açıyoruz — yoksa
+        // ekranlar Firestore hiç boş dönmeyecekmiş gibi sonsuza kadar
+        // bekler, bundled statik veriye hiç geçilemez.
+        dispatch({ type: "SET_WORDS_READY" });
       }
     } catch (e) {
       // Firebase yoksa lokal kelimeler kullanılır
+      dispatch({ type: "SET_WORDS_READY" });
     }
   };
 
@@ -351,7 +399,8 @@ export function AppProvider({ children }) {
     // Tek kelime öğrenildiğinde çağrılır (biliyorum butonu)
     recordWordLearned: async () => {
       const today = new Date().toDateString();
-      const dailyStats = { ...(state.stats.dailyStats || {}) };
+      const base = statsRef.current;
+      const dailyStats = { ...(base.dailyStats || {}) };
       dailyStats[today] = {
         wordsLearned: (dailyStats[today]?.wordsLearned || 0) + 1,
         sessionsCompleted: dailyStats[today]?.sessionsCompleted || 0,
@@ -359,19 +408,21 @@ export function AppProvider({ children }) {
       };
       const newStreak = calculateStreak({ dailyStats });
       const updatedStats = {
-        ...state.stats,
+        ...base,
         dailyStats,
-        totalWordsLearned: (state.stats.totalWordsLearned || 0) + 1,
+        totalWordsLearned: (base.totalWordsLearned || 0) + 1,
         streak: newStreak,
-        longestStreak: Math.max(state.stats.longestStreak || 0, newStreak),
+        longestStreak: Math.max(base.longestStreak || 0, newStreak),
       };
+      statsRef.current = updatedStats;
       dispatch({ type: "UPDATE_STATS", payload: updatedStats });
       await Storage.updateStats(updatedStats);
     },
 
     recordSessionComplete: async (wordsLearned) => {
       const today = new Date().toDateString();
-      const dailyStats = { ...(state.stats.dailyStats || {}) };
+      const base = statsRef.current;
+      const dailyStats = { ...(base.dailyStats || {}) };
       dailyStats[today] = {
         wordsLearned: (dailyStats[today]?.wordsLearned || 0) + wordsLearned,
         sessionsCompleted: (dailyStats[today]?.sessionsCompleted || 0) + 1,
@@ -380,13 +431,14 @@ export function AppProvider({ children }) {
 
       const newStreak = calculateStreak({ dailyStats });
       const updatedStats = {
-        ...state.stats,
+        ...base,
         dailyStats,
-        totalWordsLearned: state.stats.totalWordsLearned + wordsLearned,
-        totalSessions: state.stats.totalSessions + 1,
+        totalWordsLearned: base.totalWordsLearned + wordsLearned,
+        totalSessions: base.totalSessions + 1,
         streak: newStreak,
-        longestStreak: Math.max(state.stats.longestStreak || 0, newStreak),
+        longestStreak: Math.max(base.longestStreak || 0, newStreak),
       };
+      statsRef.current = updatedStats;
 
       dispatch({ type: "UPDATE_STATS", payload: updatedStats });
       dispatch({ type: "INCREMENT_DAILY_COUNT", payload: wordsLearned });
@@ -446,7 +498,10 @@ export function AppProvider({ children }) {
     },
 
     // Firebase kelimelerini yenile
-    refreshFirestoreWords: loadFirestoreWords,
+    // forceRefresh=true: admin bir kelimeyi düzenledikten sonra bu
+    // çağrılıyor, önbelleği atlayıp her zaman taze veri çekmesi şart —
+    // aksi halde admin kendi yaptığı değişikliği göremez.
+    refreshFirestoreWords: () => loadFirestoreWords(true),
 
     // Tüm yerel veriyi sil ve bellekteki state'i de sıfırla (bkz. RESET_STATE
     // yorumu) — böylece kullanıcı "Sıfırlandı" dedikten hemen sonra, uygulamayı

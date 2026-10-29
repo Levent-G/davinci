@@ -16,7 +16,15 @@ import {
 const SubscriptionContext = createContext(null);
 
 const TRIAL_DAYS = 7;
-const FREE_DAILY_LIMIT = 10;
+// DÜZELTME: eskiden 10'du ama öğrenme algoritması (DAILY_TARGET,
+// davinciAlgorithm.js) zaten premium/trial kullanıcıyı bile günde ~5
+// kelimelik partilerle sınırlıyordu — yani 10'luk ücretsiz limit hiçbir
+// zaman devreye girmiyordu (herkes zaten 5'in altındaydı). Artık premium/
+// trial "5'lik parti"yi gün içinde art arda tekrarlayabiliyor (bkz.
+// LearnScreen.jsx'teki restingCount düzeltmesi), ücretsiz kullanıcı ise
+// deneme süresi bitince günde sadece 2 kelimeyle sınırlı — gerçek bir fark
+// oluşsun diye.
+const FREE_DAILY_LIMIT = 2;
 
 const initialState = {
   plan: "trial",
@@ -91,6 +99,22 @@ export function SubscriptionProvider({ children }) {
         let resolvedPlan = sub.plan;
         if (isPremium) resolvedPlan = "premium";
         else if (isTrialExpired) resolvedPlan = "free";
+
+        // DÜZELTME: deneme süresi bitince "free"e geçiş SADECE yerel
+        // state'te hesaplanıyordu — Firestore'daki subscription.plan hiç
+        // güncellenmiyordu. Uygulama içindeki gerçek davranış (kelime
+        // limiti vb.) doğru çalışıyordu ama admin panelindeki kullanıcı
+        // listesi her zaman "Trial" gösteriyordu çünkü doğrudan
+        // Firestore'dan okuyor. Artık bu geçiş tespit edildiğinde hem
+        // yerelde hem Firestore'da kalıcı olarak işaretleniyor.
+        if (resolvedPlan === "free" && sub.plan !== "free") {
+          await Storage.saveSubscription({ ...sub, plan: "free" });
+          if (profile?.id) {
+            saveUser(profile.id, { "subscription.plan": "free" }).catch(
+              () => {}
+            );
+          }
+        }
 
         dispatch({
           type: "INIT_SUBSCRIPTION",

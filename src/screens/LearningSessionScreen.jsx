@@ -24,18 +24,16 @@ import {
   HOUR,
   DAILY_TARGET,
   generateQuizOptions,
-  afterLearning,
-  alignToGroup,
   getInFlightReviewCount,
-  getBatchInPlayCount,
 } from "../utils/davinciAlgorithm";
 import { useApp } from "../context/AppContext";
+import { useSubscription } from "../context/SubscriptionContext";
 import { speakWord } from "../utils/textToSpeech";
 import { hapticSuccess, hapticError } from "../utils/haptics";
 import { markCompleted } from "../utils/sessionBridge";
 import { scheduleAllReviews } from "../utils/notifications";
 import * as Notifications from "expo-notifications";
-import { getWordPhotos } from "../services/wordPhotos";
+import { getWordPhotos, cacheWordPhotoLocally } from "../services/wordPhotos";
 
 const { width } = Dimensions.get("window");
 
@@ -46,10 +44,18 @@ const STAGES = [
   { id: 3, name: "Bağla", icon: "🕸️", color: "#81C784" },
   { id: 4, name: "Test", icon: "⚖️", color: "#E17055" },
 ];
+// "Yaz" (cümle yazma) adımı akıştan kaldırıldı — tamamen silmek yerine
+// burada filtreleniyor, geri eklemek istenirse ACTIVE_STAGES = STAGES
+// yapmak yeterli (aşağıdaki WRITE_STAGE_ENABLED'ı da true yapmak gerekir).
+const ACTIVE_STAGES = STAGES.filter((s) => s.name !== "Yaz");
+const WRITE_STAGE_ENABLED = false;
 
 export default function LearningSessionScreen({ navigation, route }) {
   const { word, level = "A1" } = route.params || {};
   const { state, actions } = useApp();
+  const { state: subState } = useSubscription();
+  const hasPremiumAccess =
+    subState.isPremium || (subState.plan === "trial" && !subState.isTrialExpired);
   const allWords = actions.getAllWords();
   const insets = useSafeAreaInsets();
   // Android'in alt gezinme çubuğu (3 tuş ya da jest çubuğu) edge-to-edge
@@ -81,7 +87,8 @@ export default function LearningSessionScreen({ navigation, route }) {
   useEffect(() => {
     if (!word) return;
     if (stage === 1) loadImage();
-    if (stage === 4) setQuizOpts(generateQuizOptions(word, allWords));
+    if (stage === ACTIVE_STAGES.length - 1)
+      setQuizOpts(generateQuizOptions(word, allWords));
   }, [stage]);
 
   // Önce kelimenin Firebase'deki kalıcı foto havuzuna bakar (admin panelinden
@@ -121,45 +128,85 @@ export default function LearningSessionScreen({ navigation, route }) {
 
   const goNext = useCallback(async () => {
     const cur = stageRef.current;
-    if (cur < 4) {
+    if (cur < ACTIVE_STAGES.length - 1) {
       stageRef.current = cur + 1;
       setStage(cur + 1);
       return;
     }
-    // Aşama 5 bitti — kelimeyi kaydet
+    // Son aşama bitti — kelimeyi kaydet
     if (word) {
       const prog = state.wordProgress[word.id] || {};
-      let newProg = afterLearning({
+      // DÜZELTME (istenen davranış): kelime 5 aşamayı bitirir bitirmez TEK
+      // BAŞINA tekrar döngüsüne girmiyor artık — günün 5 kelimelik partisi
+      // TAMAMEN bitene kadar "hazır bekliyor" (readyForReview) durumunda
+      // kalıyor; status hâlâ LEARNING olduğu için getReviewWords/
+      // getWaitingReviewCount gibi sorgulara hiç girmiyor, kullanıcı tek
+      // kelime yapıp çıkarsa tekrar/bildirim gelmiyor. Parti (5 kelime)
+      // tamamlanınca hepsi AŞAĞIDA AYNI ANDA, senkron olarak tekrar
+      // döngüsüne giriyor.
+      const readyProg = {
         ...prog,
+        status: STATUS.LEARNING,
+        readyForReview: true,
         startedAt: prog.startedAt || new Date().toISOString(),
-      });
-      // Bu kelime, o an döngüde olan diğer kelimeler varsa (örn. dünden
-      // kalan ve bugün tekrar edilmiş kelimeler ya da halihazırda due
-      // olmuş bir grup) onların ortak zamanına hizalanıyor — böylece
-      // "günlük 5" grubu tek bir zamanlamada ilerliyor.
-      newProg = alignToGroup(newProg, state.wordProgress, word.id);
+        updatedAt: new Date().toISOString(),
+      };
+      // Kelime öğrenmeyi bitirdi — fotoğrafı cihaza indirip önbelleğe al
+      // ki tekrar ekranı internet olmasa bile çalışsın. Fire-and-forget:
+      // navigasyonu bloklamıyor, offline'da sessizce başarısız olup uzak
+      // URL'e düşüyor.
+      if (imageUri) cacheWordPhotoLocally(word.id, imageUri);
       let mergedProgress = state.wordProgress;
       try {
-        await actions.updateWordProgress(word.id, newProg);
-        mergedProgress = { ...state.wordProgress, [word.id]: newProg };
+        await actions.updateWordProgress(word.id, readyProg);
+        mergedProgress = { ...state.wordProgress, [word.id]: readyProg };
       } catch {}
 
       try {
-        // Bildirim SADECE günlük 5 kelimelik parti tamamen dolduğunda
-        // planlanır — tek tek her kelime bittiğinde değil. Aksi halde
-        // örn. 2 kelime bitirip çıkıldığında bile "1. Tekrar" bildirimi
-        // erkenden gelirdi.
-        const batchInPlay = getBatchInPlayCount(allWords, mergedProgress);
-        console.log(
-          `[review-notif] batchInPlay=${batchInPlay} target=${DAILY_TARGET}`
+        const readyEntries = Object.entries(mergedProgress).filter(
+          ([, p]) => p?.status === STATUS.LEARNING && p?.readyForReview
         );
-        if (batchInPlay >= DAILY_TARGET) {
+        console.log(
+          `[review-notif] readyForReview=${readyEntries.length}/${DAILY_TARGET}`
+        );
+        if (readyEntries.length >= DAILY_TARGET) {
+          // Parti tamamlandı — hepsini AYNI ANDA (tek bir ortak zamana)
+          // tekrar döngüsüne sokuyoruz.
+          const dueAt = new Date(Date.now() + HOUR).toISOString();
+          const nowIso = new Date().toISOString();
+          await Promise.all(
+            readyEntries.map(([id, p]) =>
+              actions.updateWordProgress(id, {
+                ...p,
+                status: STATUS.REVIEW,
+                readyForReview: false,
+                reviewsDone: 0,
+                wrongTotal: 0,
+                dayDone: false,
+                nextReviewAt: dueAt,
+                updatedAt: nowIso,
+              })
+            )
+          );
+          readyEntries.forEach(([id, p]) => {
+            mergedProgress[id] = {
+              ...p,
+              status: STATUS.REVIEW,
+              readyForReview: false,
+              reviewsDone: 0,
+              wrongTotal: 0,
+              dayDone: false,
+              nextReviewAt: dueAt,
+              updatedAt: nowIso,
+            };
+          });
+
           const pendingCount = getInFlightReviewCount(mergedProgress);
-          await scheduleAllReviews(pendingCount || 1, HOUR);
+          await scheduleAllReviews(pendingCount, HOUR);
           const scheduled =
             await Notifications.getAllScheduledNotificationsAsync();
           console.log(
-            `[review-notif] scheduled OK, pendingCount=${pendingCount}, total scheduled=${scheduled.length}`,
+            `[review-notif] parti tamamlandı, scheduled OK, pendingCount=${pendingCount}, total scheduled=${scheduled.length}`,
             scheduled.map((s) => s.identifier)
           );
         }
@@ -219,10 +266,9 @@ export default function LearningSessionScreen({ navigation, route }) {
   const canNext =
     (stage === 0 && showMeaning) ||
     stage === 1 ||
-    (stage === 2 && sentenceOk) ||
-    (stage === 3 && repeatCount >= 3);
+    (stage === 2 && repeatCount >= 3);
 
-  const st = STAGES[stage];
+  const st = ACTIVE_STAGES[stage];
   if (!word) return null;
 
   return (
@@ -253,7 +299,7 @@ export default function LearningSessionScreen({ navigation, route }) {
           <Ionicons name="close" size={20} color={COLORS.textSecondary} />
         </TouchableOpacity>
         <View style={s.pills}>
-          {STAGES.map((st2, i) => (
+          {ACTIVE_STAGES.map((st2, i) => (
             <View
               key={i}
               style={[
@@ -266,7 +312,7 @@ export default function LearningSessionScreen({ navigation, route }) {
             />
           ))}
         </View>
-        <Text style={s.stageLbl}>{stage + 1}/5</Text>
+        <Text style={s.stageLbl}>{stage + 1}/{ACTIVE_STAGES.length}</Text>
       </View>
 
       <View style={[s.stageHdr, { backgroundColor: st.color + "15" }]}>
@@ -290,7 +336,7 @@ export default function LearningSessionScreen({ navigation, route }) {
               <Ionicons name="volume-high-outline" size={22} color={st.color} />
             </TouchableOpacity>
           </View>
-          {showMeaning && stage !== 4 && (
+          {showMeaning && stage !== ACTIVE_STAGES.length - 1 && (
             <View style={s.meaningBox}>
               <Text style={[s.meaningTxt, { color: st.color }]}>
                 {word.translation}
@@ -356,11 +402,19 @@ export default function LearningSessionScreen({ navigation, route }) {
                 {!photoRefreshed && photos.length > 1 && (
                   <TouchableOpacity
                     style={[s.refreshBtn, { borderColor: st.color + "60" }]}
-                    onPress={refreshPhoto}
+                    onPress={() =>
+                      hasPremiumAccess
+                        ? refreshPhoto()
+                        : navigation.navigate("Paywall")
+                    }
                   >
-                    <Ionicons name="refresh" size={14} color={st.color} />
+                    <Ionicons
+                      name={hasPremiumAccess ? "refresh" : "lock-closed"}
+                      size={14}
+                      color={st.color}
+                    />
                     <Text style={[s.refreshBtnTxt, { color: st.color }]}>
-                      Farklı fotoğraf
+                      Farklı fotoğraf{!hasPremiumAccess ? " (Premium)" : ""}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -387,8 +441,8 @@ export default function LearningSessionScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* AŞAMA 3 — YAZ */}
-        {stage === 2 &&
+        {/* AŞAMA — YAZ (akıştan kaldırıldı, bkz. WRITE_STAGE_ENABLED) */}
+        {WRITE_STAGE_ENABLED &&
           (() => {
             // Kelimenin kendisi 3 karakterden kısaysa (örn. "no"), minimum
             // uzunluk şartı kelimeyi yazmayı imkansız hale getirmesin.
@@ -478,8 +532,8 @@ export default function LearningSessionScreen({ navigation, route }) {
             );
           })()}
 
-        {/* AŞAMA 4 — BAĞLA */}
-        {stage === 3 && (
+        {/* AŞAMA — BAĞLA */}
+        {stage === 2 && (
           <View style={s.content}>
             <Text style={s.connectLabel}>
               "{word.word}" kelimesini 3 kez sesli söyle:
@@ -547,8 +601,8 @@ export default function LearningSessionScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* AŞAMA 5 — TEST */}
-        {stage === 4 && (
+        {/* AŞAMA — TEST */}
+        {stage === 3 && (
           <View style={s.content}>
             <Text style={s.quizQ}>Bu kelimenin anlamı nedir?</Text>
             <Animated.View
@@ -604,7 +658,7 @@ export default function LearningSessionScreen({ navigation, route }) {
         )}
       </ScrollView>
 
-      {stage !== 4 && (
+      {stage !== ACTIVE_STAGES.length - 1 && (
         <View style={[s.bottom, { paddingBottom: SPACING.xl + safeBottom }]}>
           <TouchableOpacity
             style={[
@@ -619,9 +673,7 @@ export default function LearningSessionScreen({ navigation, route }) {
             >
               {stage === 0 && !showMeaning
                 ? "Önce Anlamı Gör"
-                : stage === 2 && !sentenceOk
-                ? "Önce Onayla"
-                : stage === 3 && repeatCount < 3
+                : stage === 2 && repeatCount < 3
                 ? `${3 - repeatCount} tekrar kaldı`
                 : "Sonraki →"}
             </Text>

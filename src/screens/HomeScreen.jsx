@@ -17,11 +17,12 @@ import { useApp } from "../context/AppContext";
 import {
   getDailyStats,
   getTodayReviewWords,
+  REVIEW_MERGE_TOLERANCE,
   hasDoneSessionToday,
   getNextReviewIn,
+  getReviewType,
   WORD_STATUS,
   getWordStatus,
-  isDueForReview,
 } from "../utils/davinciAlgorithm";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -67,7 +68,16 @@ export default function HomeScreen({ navigation }) {
   // hesaplanıyor (memoize edilmemiş) — yukarıdaki tick sadece periyodik
   // re-render'ı TETİKLEMEK için var, burada ayrıca referans vermeye gerek yok.
   const dailyStats = getDailyStats(allWords, state.wordProgress);
-  const reviewWords = getTodayReviewWords(allWords, state.wordProgress);
+  // DÜZELTME: burada tolerans olmadan (sadece tam due olanlar) çağrılıyordu,
+  // LearnScreen.jsx ise REVIEW_MERGE_TOLERANCE ile (yakın zamanda due olacak
+  // kelimeleri de dahil ederek) — bu yüzden Ana Sayfa'dan "Tekrar Et" ile
+  // Öğren ekranından "Tekrar Et" FARKLI kelime listeleri gösteriyordu. Artık
+  // ikisi aynı mantığı kullanıyor.
+  const reviewWords = getTodayReviewWords(
+    allWords,
+    state.wordProgress,
+    REVIEW_MERGE_TOLERANCE
+  );
   const reviewCount = reviewWords.length;
   const sessionDone = hasDoneSessionToday(state.wordProgress);
   const nextReviewIn = getNextReviewIn(state.wordProgress);
@@ -96,14 +106,16 @@ export default function HomeScreen({ navigation }) {
         subtitle: "Hafızan zayıflamadan tekrar et",
         btnLabel: "Şimdi Tekrar Yap",
         btnColor: COLORS.secondary,
+        // DÜZELTME: eskiden burada isDueForReview ile (toleranssız, dayDone
+        // durumunu dikkate almadan, en fazla 5 kelimeyle sınırlı) ayrı bir
+        // liste hesaplanıyordu — hem yukarıdaki "X kelime tekrar bekliyor"
+        // başlığıyla hem de Öğren ekranının "Tekrar Et" butonuyla FARKLI
+        // kelimeler gösteriyordu. Artık ikisi de aynı reviewWords'ü kullanıyor.
         onPress: () => {
-          const words = allWords
-            .filter((w) => {
-              const p = state.wordProgress[w.id];
-              return p && isDueForReview(p);
-            })
-            .slice(0, 5);
-          navigation.navigate("Review", { words, reviewType: "r1" });
+          navigation.navigate("Review", {
+            words: reviewWords,
+            reviewType: getReviewType(reviewWords, state.wordProgress),
+          });
         },
       };
     }
@@ -308,13 +320,10 @@ export default function HomeScreen({ navigation }) {
             onPress={
               reviewCount > 0
                 ? () => {
-                    const words = allWords
-                      .filter((w) => {
-                        const p = state.wordProgress[w.id];
-                        return p && isDueForReview(p);
-                      })
-                      .slice(0, 5);
-                    navigation.navigate("Review", { words, reviewType: "r1" });
+                    navigation.navigate("Review", {
+                      words: reviewWords,
+                      reviewType: getReviewType(reviewWords, state.wordProgress),
+                    });
                   }
                 : null
             }

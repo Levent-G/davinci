@@ -99,6 +99,12 @@ export default function OnboardingScreen({ navigation }) {
   // Google/Apple girişinden gelen adı öneri olarak dolduruyoruz — kullanıcı
   // isterse değiştirebilir.
   const [userName, setUserName] = useState(state.authUser?.displayName || "");
+  // DÜZELTME (Apple Guideline 4 reddi — Sign In with Apple): Authentication
+  // Services zaten adı sağladıysa (Apple SADECE ilk girişte verir, Google
+  // her zaman verir), kullanıcıya bunu TEKRAR sormak Apple'ın HIG
+  // kurallarına aykırı. İsim zaten varsa "name" adımı tamamen atlanıyor.
+  const hasNameAlready = !!state.authUser?.displayName?.trim();
+  const nextAfterSlides = hasNameAlready ? "level_test" : "name";
   const [testIndex, setTestIndex] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [selectedAnswer, setSelected] = useState(null);
@@ -188,7 +194,7 @@ export default function OnboardingScreen({ navigation }) {
             {/* Skip */}
             <TouchableOpacity
               style={styles.skipBtn}
-              onPress={() => animateTransition(() => setStep("name"))}
+              onPress={() => animateTransition(() => setStep(nextAfterSlides))}
             >
               <Text style={styles.skipText}>Atla</Text>
             </TouchableOpacity>
@@ -241,7 +247,7 @@ export default function OnboardingScreen({ navigation }) {
               style={[styles.nextBtn, { backgroundColor: slide.accentColor }]}
               onPress={() => {
                 if (isLast) {
-                  animateTransition(() => setStep("name"));
+                  animateTransition(() => setStep(nextAfterSlides));
                 } else {
                   animateTransition(() => setSlideIndex(slideIndex + 1));
                 }

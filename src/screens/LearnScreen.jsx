@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Modal,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -12,16 +13,21 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
+import { useSubscription } from "../context/SubscriptionContext";
 import {
   STATUS,
   DAILY_TARGET,
   getReviewWords,
+  REVIEW_MERGE_TOLERANCE,
   getNewWords,
   getNextReviewIn,
   getDailyStats,
   getWaitingReviewCount,
+  getWaitingReviewWords,
+  getReadyForReviewCount,
   getRestingCount,
   getReviewType,
+  getTodayNewWordsCount,
 } from "../utils/davinciAlgorithm";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -36,6 +42,7 @@ const LEVEL_COLORS = {
 
 export default function LearnScreen({ navigation, route }) {
   const { state, actions } = useApp();
+  const { state: subState, actions: subActions } = useSubscription();
   // DÜZELTME: sabit "A1" varsayılanı, kullanıcının onboarding'deki seviye
   // testi sonucunu (state.user.settings / state.settings) hiç okumuyordu —
   // Learn sekmesi tab navigator'da hiç unmount olmadığı için, doğrudan bu
@@ -47,6 +54,7 @@ export default function LearnScreen({ navigation, route }) {
       "A1"
   );
   const [tick, setTick] = useState(0);
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -68,7 +76,14 @@ export default function LearnScreen({ navigation, route }) {
   const allWords = actions.getAllWords();
   const wp = state.wordProgress;
 
-  const reviewWords = useMemo(() => getReviewWords(allWords, wp), [wp, tick]);
+  // DÜZELTME: farklı zamanlarda başlamış kelime gruplarının art arda ama
+  // AYRI tekrar ekranları olarak çıkması şikayetine karşı — henüz tam due
+  // olmamış ama yakın zamanda (30 dk içinde) due olacak kelimeler de bu
+  // oturuma dahil ediliyor (bkz. REVIEW_MERGE_TOLERANCE açıklaması).
+  const reviewWords = useMemo(
+    () => getReviewWords(allWords, wp, REVIEW_MERGE_TOLERANCE),
+    [wp, tick]
+  );
   const newWords = useMemo(
     () => getNewWords(allWords, wp, selectedLevel, 5),
     [wp, selectedLevel, tick]
@@ -82,9 +97,30 @@ export default function LearnScreen({ navigation, route }) {
   //  - waitingCount: 3 turluk döngüde olup henüz sırası gelmemiş kelime
   //  - restingCount: döngüsü tamamen bitmiş ve şu an dinlenen kelime
   const waitingCount = useMemo(() => getWaitingReviewCount(wp), [wp, tick]);
+  const waitingWords = useMemo(
+    () => getWaitingReviewWords(allWords, wp),
+    [wp, tick]
+  );
   const restingCount = useMemo(() => getRestingCount(wp), [wp, tick]);
+  // Henüz günün 5'lik partisi tamamlanmadığı için tekrar döngüsüne
+  // SENKRON olarak girmeyi bekleyen (5 aşamayı bitirmiş ama hâlâ
+  // STATUS.LEARNING'de duran) kelimeler — bkz. LearningSessionScreen.jsx.
+  // Bunlar kotaya dahil edilmezse, kullanıcı 3 kelime yapıp "Öğren"e
+  // tekrar bastığında kota dolu görünmediği için 5 kelime DAHA istenir
+  // (parti 5 yerine 8'e çıkar).
+  const readyCount = useMemo(() => getReadyForReviewCount(wp), [wp, tick]);
+  // DÜZELTME: eskiden restingCount (döngüsü BİTMİŞ, artık hiçbir şeye
+  // ihtiyacı olmayan kelimeler) de günlük 5'lik kotaya dahil ediliyordu.
+  // Bu yüzden örn. dünden kalan 2 kelime bugün tekrarını bitirip
+  // "resting"e geçince, kullanıcı sadece 1 tekrar yapmış olsa bile kota
+  // dolu sayılıp "yarın seni bekliyorum" gösteriliyordu — yeni kelime
+  // öğrenmeye devam edebilecekken durduruluyordu (kullanıcının bildirdiği
+  // "günde en az 3 tekrar" beklentisini karşılamıyordu). Artık kotayı
+  // sadece HÂLÂ bir şeye ihtiyacı olan (due, bekleyen ya da parti
+  // tamamlanmayı bekleyen) kelimeler dolduruyor; bitmiş kelimeler
+  // öğrenmeye devam etmeyi engellemiyor.
   const batchInPlay = Math.min(
-    reviewWords.length + waitingCount + restingCount,
+    reviewWords.length + waitingCount + readyCount,
     DAILY_TARGET
   );
   const remainingToday = Math.max(DAILY_TARGET - batchInPlay, 0);
@@ -101,6 +137,15 @@ export default function LearnScreen({ navigation, route }) {
   const color = LEVEL_COLORS[selectedLevel] || COLORS.accent;
   const hasReview = reviewWords.length > 0;
   const hasNew = newWords.length > 0;
+  const hasPremiumAccess =
+    subState.isPremium || (subState.plan === "trial" && !subState.isTrialExpired);
+
+  // Ücretsiz kullanıcı (deneme süresi bitmiş, premium değil) günde sınırlı
+  // sayıda yeni kelime öğrenebilir — trial/premium'da algoritmanın kendi
+  // 5'lik parti hızı dışında ek bir sınır yok.
+  const todayNewCount = useMemo(() => getTodayNewWordsCount(wp), [wp, tick]);
+  const canLearnMore = subActions.canLearnWord(todayNewCount);
+  const freeRemaining = subActions.getRemainingFreeWords(todayNewCount);
 
   const levelProgress = useMemo(() => {
     const lvlWords = allWords.filter((w) => w.level === selectedLevel);
@@ -122,10 +167,29 @@ export default function LearnScreen({ navigation, route }) {
   // 3. Kota dolu ama hâlâ döngüde (waiting) kelime var → Da Vinci çağıracak
   // 4. Kota dolu ve hiçbir şey döngüde değil (hepsi dinleniyor) → Yarın bekliyor
   const showReviewBtn = hasReview;
-  const showLearnBtn = !hasReview && hasNew && remainingToday > 0;
-  const showWaitReview = !hasReview && !showLearnBtn && waitingCount > 0;
+  const showFreeLimitReached =
+    !hasReview && hasNew && remainingToday > 0 && !canLearnMore;
+  const showLearnBtn =
+    !hasReview && hasNew && remainingToday > 0 && canLearnMore;
+  const showWaitReview =
+    !hasReview && !showLearnBtn && !showFreeLimitReached && waitingCount > 0;
   const showWaitTomorrow =
-    !hasReview && !showLearnBtn && waitingCount === 0 && restingCount > 0;
+    !hasReview &&
+    !showLearnBtn &&
+    !showFreeLimitReached &&
+    waitingCount === 0 &&
+    restingCount > 0;
+  const sessionWordsNeeded = Math.min(
+    remainingToday,
+    freeRemaining === Infinity ? remainingToday : freeRemaining
+  );
+  // "Devam Et" — bekleyen (henüz due olmamış) turun süresini zorla
+  // doldurup ŞİMDİ tekrar edilebilir hale getiriyor. Yeni kelimeye
+  // GEÇMİYOR — aynı günün 5 kelimesiyle kaldığı yerden devam ediyor.
+  // (3. tur da bitip kelimeler "öğrenildi/dinleniyor"a geçtiğinde,
+  // showLearnBtn zaten kendiliğinden devreye giriyor — ayrı bir yola
+  // gerek yok.)
+  const showContinueOverride = hasPremiumAccess && showWaitReview;
 
   return (
     <SafeAreaView style={s.container}>
@@ -259,8 +323,70 @@ export default function LearnScreen({ navigation, route }) {
                 <View key={i} style={[s.dot, { opacity: 0.3 + i * 0.35 }]} />
               ))}
             </View>
+            {showContinueOverride && (
+              <TouchableOpacity
+                style={s.continueBtn}
+                onPress={() => setShowOverrideModal(true)}
+              >
+                <Text style={[s.continueBtnTxt, { color }]}>Devam Et</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
+
+        {/* Önerilen günlük temponun üzerine çıkma uyarısı */}
+        <Modal
+          visible={showOverrideModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowOverrideModal(false)}
+        >
+          <View style={s.modalOverlay}>
+            <View style={s.modalCard}>
+              <Text style={s.modalEmoji}>⏱️</Text>
+              <Text style={s.modalTitle}>Erken tekrar etmek ister misin?</Text>
+              <Text style={s.modalBody}>
+                Bu kelimelerin tekrar vakti henüz gelmedi. Da Vinci yöntemi,
+                kelimeleri belirli aralıklarla tekrar ederek kalıcı hafızaya
+                işler — vaktinden önce tekrar etmek bu etkiyi azaltabilir.
+                Yine de istersen şimdi devam edebilirsin.
+              </Text>
+              <View style={s.modalBtnRow}>
+                <TouchableOpacity
+                  style={[s.modalBtn, s.modalBtnGhost]}
+                  onPress={() => setShowOverrideModal(false)}
+                >
+                  <Text style={s.modalBtnGhostTxt}>Vazgeç</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.modalBtn, { backgroundColor: color }]}
+                  onPress={async () => {
+                    setShowOverrideModal(false);
+                    // Bekleyen kelimelerin tur süresini şimdiye çekip
+                    // ŞİMDİ tekrar edilebilir hale getiriyoruz — yeni
+                    // kelimeye geçmiyoruz, aynı günün kelimeleriyle
+                    // kaldığı yerden devam.
+                    const now = new Date().toISOString();
+                    await Promise.all(
+                      waitingWords.map((w) =>
+                        actions.updateWordProgress(w.id, {
+                          ...(wp[w.id] || {}),
+                          nextReviewAt: now,
+                        })
+                      )
+                    );
+                    navigation.navigate("Review", {
+                      words: waitingWords,
+                      reviewType: getReviewType(waitingWords, wp),
+                    });
+                  }}
+                >
+                  <Text style={s.modalBtnTxt}>Yine de Devam Et</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* 3. Yarın bekliyor (günün 5 kelimelik hedefi tam bitti) */}
         {showWaitTomorrow && (
@@ -274,6 +400,29 @@ export default function LearnScreen({ navigation, route }) {
           </View>
         )}
 
+        {/* Ücretsiz günlük limit dolmuş — premium'a yönlendir */}
+        {showFreeLimitReached && (
+          <TouchableOpacity
+            style={s.learnCard}
+            onPress={() => navigation.navigate("Paywall")}
+            activeOpacity={0.9}
+          >
+            <LinearGradient
+              colors={[COLORS.accent, COLORS.accentDark || COLORS.accent]}
+              style={s.learnGrad}
+            >
+              <Text style={s.learnEmoji}>✨</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.learnTitle}>Günlük ücretsiz hakkın doldu</Text>
+                <Text style={s.learnSub}>
+                  Sınırsız öğrenmek için Premium'a geç
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
         {/* 4. Öğren butonu — sadece kalan kadar kelime istenir */}
         {showLearnBtn && (
           <TouchableOpacity
@@ -281,7 +430,7 @@ export default function LearnScreen({ navigation, route }) {
             onPress={() =>
               navigation.navigate("PreScan", {
                 level: selectedLevel,
-                wordsNeeded: remainingToday,
+                wordsNeeded: sessionWordsNeeded,
               })
             }
             activeOpacity={0.9}
@@ -463,6 +612,69 @@ const s = StyleSheet.create({
   },
   dots: { flexDirection: "row", gap: 8, marginTop: SPACING.sm },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.accent },
+  continueBtn: {
+    marginTop: SPACING.md,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  continueBtnTxt: { fontWeight: "700", fontSize: FONT_SIZES.sm },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: SPACING.xl,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: COLORS.backgroundCard,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.xl,
+    alignItems: "center",
+    gap: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalEmoji: { fontSize: 36 },
+  modalTitle: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.lg,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  modalBody: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZES.sm,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: SPACING.sm,
+  },
+  modalBtnRow: {
+    flexDirection: "row",
+    gap: SPACING.sm,
+    width: "100%",
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.full,
+    alignItems: "center",
+  },
+  modalBtnGhost: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  modalBtnGhostTxt: {
+    color: COLORS.textSecondary,
+    fontWeight: "700",
+    fontSize: FONT_SIZES.sm,
+  },
+  modalBtnTxt: { color: "#fff", fontWeight: "800", fontSize: FONT_SIZES.sm },
   learnCard: {
     marginHorizontal: SPACING.lg,
     marginBottom: SPACING.lg,

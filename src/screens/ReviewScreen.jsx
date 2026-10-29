@@ -30,7 +30,7 @@ import {
   cancelReviewNotifications,
   scheduleReviewNotification,
 } from "../utils/notifications";
-import { getWordPhotos } from "../services/wordPhotos";
+import { getWordPhotos, getLocalCachedPhotoUri } from "../services/wordPhotos";
 
 const { width } = Dimensions.get("window");
 
@@ -54,7 +54,32 @@ export default function ReviewScreen({ navigation, route }) {
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  // Fotoğraf kartı — "Türkçesini Gör" ile 3D çevrilip arkasında Türkçe
+  // anlamı gösteriyor. Quiz artık fotoğraftan İNGİLİZCE kelimeyi
+  // buldurtuyor (eskiden kelimenin İngilizcesi zaten yazılı duruyor,
+  // sadece Türkçesi soruluyordu — bu da gerçek bir hatırlama testi
+  // değildi).
+  const [flipped, setFlipped] = useState(false);
+  const flipAnim = useRef(new Animated.Value(0)).current;
   const word = words[idx] || null;
+
+  const toggleFlip = () => {
+    Animated.spring(flipAnim, {
+      toValue: flipped ? 0 : 1,
+      friction: 8,
+      tension: 10,
+      useNativeDriver: true,
+    }).start();
+    setFlipped((f) => !f);
+  };
+  const frontInterpolate = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+  const backInterpolate = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["180deg", "360deg"],
+  });
 
   useEffect(() => {
     latestProgressRef.current = state.wordProgress;
@@ -63,13 +88,22 @@ export default function ReviewScreen({ navigation, route }) {
   useEffect(() => {
     if (!word) return;
     setQuizAnswer(null);
+    setFlipped(false);
+    flipAnim.setValue(0);
     setQuizOpts(generateQuizOptions(word, allWords));
+    // Önce cihaza indirilmiş yerel kopyaya bak — varsa internet olmasa
+    // bile anında gösterilir (bkz. LearningSessionScreen'deki
+    // cacheWordPhotoLocally çağrısı).
+    const localUri = getLocalCachedPhotoUri(word.id);
     // Öğrenme aşamasında kullanıcı fotoğrafı yenilediyse, o seçim
     // kelimenin ilerleme kaydına yazılmıştır — burada da aynısını
     // gösteriyoruz (yeniden Pexels sorgusu atıp farklı/ilk sonucu
     // göstermek yerine).
     const savedPhoto = state.wordProgress[word.id]?.photoUri;
-    if (savedPhoto) {
+    if (localUri) {
+      setImageUri(localUri);
+      setImgLoading(false);
+    } else if (savedPhoto) {
       setImageUri(savedPhoto);
       setImgLoading(false);
     } else if (word.imageUrl) {
@@ -345,49 +379,68 @@ export default function ReviewScreen({ navigation, route }) {
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
       >
-        <View style={s.imgBox}>
-          {imageUri ? (
-            <Image
-              source={{ uri: imageUri }}
-              style={s.image}
-              resizeMode="contain"
-            />
-          ) : (
-            <View style={s.imgPH}>
-              {imgLoading ? (
-                <ActivityIndicator size="large" color={COLORS.accent} />
-              ) : (
-                <Ionicons
-                  name="image-outline"
-                  size={48}
-                  color={COLORS.textMuted}
-                />
-              )}
-            </View>
-          )}
-        </View>
-
-        <View style={s.wordCard}>
-          <Text style={s.wordTxt}>{word.word}</Text>
-          {word.partOfSpeech && (
-            <Text style={s.wordPos}>{word.partOfSpeech}</Text>
-          )}
-          {/* Türkçe anlam quiz sırasında gizli */}
-          <TouchableOpacity
-            style={s.speakBtn}
-            onPress={() => speakWord(word.word)}
+        <View style={s.flipWrap}>
+          <Animated.View
+            pointerEvents={flipped ? "none" : "auto"}
+            style={[
+              s.imgBox,
+              s.flipFace,
+              {
+                transform: [
+                  { perspective: 1000 },
+                  { rotateY: frontInterpolate },
+                ],
+              },
+            ]}
           >
-            <Ionicons
-              name="volume-high-outline"
-              size={22}
-              color={COLORS.accent}
-            />
-            <Text style={s.speakTxt}>Sesli Dinle</Text>
-          </TouchableOpacity>
+            {imageUri ? (
+              <Image
+                source={{ uri: imageUri }}
+                style={s.image}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={s.imgPH}>
+                {imgLoading ? (
+                  <ActivityIndicator size="large" color={COLORS.accent} />
+                ) : (
+                  <Ionicons
+                    name="image-outline"
+                    size={48}
+                    color={COLORS.textMuted}
+                  />
+                )}
+              </View>
+            )}
+            <TouchableOpacity style={s.flipHintBtn} onPress={toggleFlip}>
+              <Ionicons name="language" size={14} color="#fff" />
+              <Text style={s.flipHintTxt}>Türkçesini Gör</Text>
+            </TouchableOpacity>
+          </Animated.View>
+          <Animated.View
+            pointerEvents={flipped ? "auto" : "none"}
+            style={[
+              s.imgBox,
+              s.flipFace,
+              s.flipBack,
+              {
+                transform: [
+                  { perspective: 1000 },
+                  { rotateY: backInterpolate },
+                ],
+              },
+            ]}
+          >
+            <Text style={s.flipBackTxt}>{word.translation}</Text>
+            <TouchableOpacity style={s.flipHintBtn} onPress={toggleFlip}>
+              <Ionicons name="image" size={14} color="#fff" />
+              <Text style={s.flipHintTxt}>Fotoğrafa Dön</Text>
+            </TouchableOpacity>
+          </Animated.View>
         </View>
 
         <View style={s.quizBox}>
-          <Text style={s.quizQ}>Bu kelimenin Türkçe anlamı nedir?</Text>
+          <Text style={s.quizQ}>Bu fotoğraftaki kelime hangisi?</Text>
           <Animated.View
             style={[s.opts, { transform: [{ translateX: shakeAnim }] }]}
           >
@@ -414,7 +467,7 @@ export default function ReviewScreen({ navigation, route }) {
                   disabled={!!quizAnswer}
                 >
                   <Text style={[s.optTxt, { color: col }]}>
-                    {opt.word.translation}
+                    {opt.word.word}
                   </Text>
                   {quizAnswer && opt.isCorrect && (
                     <Ionicons
@@ -458,9 +511,24 @@ export default function ReviewScreen({ navigation, route }) {
               >
                 {quizAnswer.isCorrect
                   ? "✅ Doğru!"
-                  : `❌ Doğrusu: ${word.translation}`}
+                  : `❌ Doğrusu: ${word.word}`}
               </Text>
             </View>
+          )}
+          {quizAnswer && (
+            <TouchableOpacity
+              style={s.speakBtn}
+              onPress={() => speakWord(word.word)}
+            >
+              <Ionicons
+                name="volume-high-outline"
+                size={22}
+                color={COLORS.accent}
+              />
+              <Text style={s.speakTxt}>
+                {word.word} — Sesli Dinle
+              </Text>
+            </TouchableOpacity>
           )}
         </View>
       </Animated.ScrollView>
@@ -494,11 +562,51 @@ const s = StyleSheet.create({
   progressBg: { height: 3, backgroundColor: COLORS.border },
   progressFill: { height: 3, backgroundColor: COLORS.accent },
   scroll: { paddingHorizontal: SPACING.lg, paddingBottom: 40 },
-  imgBox: {
+  flipWrap: {
+    height: 340,
     marginVertical: SPACING.md,
+    position: "relative",
+  },
+  imgBox: {
     borderRadius: RADIUS.xl,
     overflow: "hidden",
   },
+  flipFace: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backfaceVisibility: "hidden",
+    backgroundColor: COLORS.backgroundCard,
+  },
+  flipBack: {
+    backgroundColor: COLORS.accent + "15",
+    borderWidth: 1,
+    borderColor: COLORS.accent + "40",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: SPACING.xl,
+  },
+  flipBackTxt: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.xxxl,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  flipHintBtn: {
+    position: "absolute",
+    bottom: SPACING.sm,
+    right: SPACING.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 6,
+    borderRadius: RADIUS.full,
+  },
+  flipHintTxt: { color: "#fff", fontSize: FONT_SIZES.xs, fontWeight: "700" },
   image: {
     width: "100%",
     height: 340,

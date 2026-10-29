@@ -21,14 +21,21 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from "../utils/theme";
 import { useApp } from "../context/AppContext";
+import { useSubscription } from "../context/SubscriptionContext";
 import { speakWord } from "../utils/textToSpeech";
 import { hapticLight } from "../utils/haptics";
 import { STATUS, DAILY_TARGET, getNewWords } from "../utils/davinciAlgorithm";
 import { wasCompleted } from "../utils/sessionBridge";
 import { getWordPhotos } from "../services/wordPhotos";
 
-const { width } = Dimensions.get("window");
+const { width, height } = Dimensions.get("window");
 const SWIPE_THRESHOLD = width * 0.25;
+// Kısa boylu telefonlarda (örn. iPhone SE) sabit 300px görsel yüksekliği,
+// kartın toplam içeriğini (görsel + etiket + kelime + çeviri + örnek +
+// sesli dinle butonu) cardArea'nın (flex:1) hesaplanan yüksekliğinden
+// taşırıyordu — taşan kısım alttaki Biliyorum/Bilmiyorum butonlarının
+// üzerine biniyordu. Ekran yüksekliğine göre ölçeklenir.
+const CARD_IMAGE_HEIGHT = Math.min(300, Math.round(height * 0.3));
 const LEVEL_COLORS = {
   A1: "#4ECDC4",
   A2: "#45B7D1",
@@ -41,6 +48,9 @@ const LEVEL_COLORS = {
 export default function PreScanScreen({ navigation, route }) {
   const { level = "A1", wordsNeeded = DAILY_TARGET } = route.params || {};
   const { state, actions } = useApp();
+  const { state: subState } = useSubscription();
+  const hasPremiumAccess =
+    subState.isPremium || (subState.plan === "trial" && !subState.isTrialExpired);
   const color = LEVEL_COLORS[level] || COLORS.accent;
 
   // LearnScreen sadece "bu oturumda kaç kelimeye ihtiyaç var" (wordsNeeded)
@@ -50,16 +60,48 @@ export default function PreScanScreen({ navigation, route }) {
   const sessionCountRef = useRef(0);
   const [sessionCount, setSessionCount] = useState(0);
 
-  // Havuz sadece ekran ilk açıldığında BİR KEZ oluşturuluyor.
-  const [pool] = useState(() =>
-    getNewWords(actions.getAllWords(), state.wordProgress, level, 50)
+  // Havuz ekran ilk açıldığında 50 kelimeyle oluşturuluyor; "Biliyorum"
+  // ile hızlıca tüketilirse (bkz. aşağıdaki useEffect) otomatik genişliyor
+  // — DÜZELTME: eskiden hiç genişlemiyordu, bu yüzden 50 kelimelik parti
+  // "biliyorum" ile geçildiğinde seviyede yüzlerce kelime kalmış olsa bile
+  // ekran "bu seviyedeki tüm kelimeleri gördün" diyip yanlışlıkla
+  // sonlandırıyordu.
+  // DÜZELTME (admin güncellemesi görünmüyor bugu): Firestore'dan kelimeler
+  // arka planda (asenkron) yükleniyor — havuz bu bitmeden oluşturulursa
+  // (yavaş ağda hızlı dokunan kullanıcı) eski/bundled statik veriye
+  // (admin'in yaptığı güncellemeden ÖNCEki haline) kilitleniyordu, çünkü
+  // havuz bir kerelik snapshot. Artık state.wordsReady olmadan havuz
+  // kurulmuyor.
+  const [pool, setPool] = useState(() =>
+    state.wordsReady
+      ? getNewWords(actions.getAllWords(), state.wordProgress, level, 50)
+      : []
   );
+  const poolBuiltRef = useRef(state.wordsReady);
+  const refillingRef = useRef(false);
+
+  useEffect(() => {
+    if (state.wordsReady && !poolBuiltRef.current) {
+      poolBuiltRef.current = true;
+      setPool(getNewWords(actions.getAllWords(), state.wordProgress, level, 50));
+    }
+  }, [state.wordsReady]);
 
   const cardIdxRef = useRef(0);
   const swipingRef = useRef(false);
   const isFirstFocus = useRef(true);
 
   const [displayIdx, setDisplayIdx] = useState(0);
+
+  useEffect(() => {
+    if (displayIdx < pool.length || refillingRef.current) return;
+    refillingRef.current = true;
+    const more = getNewWords(actions.getAllWords(), state.wordProgress, level, 50);
+    if (more.length > 0) {
+      setPool((prev) => [...prev, ...more]);
+    }
+    refillingRef.current = false;
+  }, [displayIdx, pool.length, state.wordProgress]);
   const [photos, setPhotos] = useState([]); // Kelimenin Firebase'deki kalıcı foto havuzu (URL dizisi)
   const [photoIdx, setPhotoIdx] = useState(0);
   const [photoRefreshed, setPhotoRefreshed] = useState(false);
@@ -239,6 +281,15 @@ export default function PreScanScreen({ navigation, route }) {
 
   const displayWord = pool[displayIdx] || null;
 
+  if (!displayWord && !state.wordsReady)
+    return (
+      <SafeAreaView style={s.container}>
+        <View style={s.center}>
+          <ActivityIndicator color={color} size="large" />
+        </View>
+      </SafeAreaView>
+    );
+
   if (!displayWord)
     return (
       <SafeAreaView style={s.container}>
@@ -328,11 +379,19 @@ export default function PreScanScreen({ navigation, route }) {
               {!photoRefreshed && photos.length > 1 && (
                 <TouchableOpacity
                   style={[s.refreshBtn, { borderColor: color + "60" }]}
-                  onPress={refreshPhoto}
+                  onPress={() =>
+                    hasPremiumAccess
+                      ? refreshPhoto()
+                      : navigation.navigate("Paywall")
+                  }
                 >
-                  <Ionicons name="refresh" size={14} color={color} />
+                  <Ionicons
+                    name={hasPremiumAccess ? "refresh" : "lock-closed"}
+                    size={14}
+                    color={color}
+                  />
                   <Text style={[s.refreshBtnTxt, { color }]}>
-                    Farklı fotoğraf
+                    Farklı fotoğraf{!hasPremiumAccess ? " (Premium)" : ""}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -477,7 +536,7 @@ const s = StyleSheet.create({
   },
   cardImg: {
     width: "100%",
-    height: 300,
+    height: CARD_IMAGE_HEIGHT,
     borderRadius: 20,
     marginBottom: 4,
     backgroundColor: COLORS.background,

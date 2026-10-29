@@ -333,6 +333,30 @@ export async function saveUserProgress(userId, wordId, progressData) {
    ANALİTİK
 ═══════════════════════════════════════════ */
 
+// Normal kullanıcıların İstatistikler ekranında "topluluk ortalaması"
+// gösterebilmesi için — en fazla 300 kullanıcılık bir örneklemden basit
+// ortalamalar çıkarır. Tüm kullanıcı koleksiyonunu taramadığı (limit'li)
+// ve çağıran taraf (StatsScreen) günlük önbelleklediği için maliyeti
+// düşük tutuyoruz.
+export async function getCommunityAverages() {
+  try {
+    await ensureFirebaseReady();
+    const snap = await firestore().collection(COLLECTIONS.USERS).limit(300).get();
+    const users = snap.docs.map((d) => d.data());
+    const n = users.length;
+    if (n === 0) return null;
+    const sum = (fn) => users.reduce((s, u) => s + (fn(u) || 0), 0);
+    return {
+      sampleSize: n,
+      avgWordsLearned: Math.round(sum((u) => u.stats?.totalWordsLearned) / n),
+      avgStreak: Math.round(sum((u) => u.stats?.streak) / n),
+      avgSessions: Math.round(sum((u) => u.stats?.totalSessions) / n),
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function getAppAnalytics() {
   try {
     await ensureFirebaseReady();
@@ -356,13 +380,19 @@ export async function getAppAnalytics() {
       return last && last >= today;
     }).length;
 
-    // Sessions sayisi - basit get
+    // DÜZELTME: eskiden tarih filtresi olmadan "en son 200 kayıt"
+    // sayılıyordu — ekranda "30 Günlük Oturum" yazsa da gösterilen sayı
+    // gerçekte 30 güne bağlı değildi (200'den az oturum varsa tüm zamanları
+    // kapsıyordu, 200'den fazlaysa 30 günden daha kısa bir pencereyi
+    // kapsayabiliyordu). Artık gerçekten son 30 günü filtreliyor.
     let sessionsCount = 0;
     try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
       const sessionsSnap = await firestore()
         .collection(COLLECTIONS.SESSIONS)
-        .orderBy("createdAt", "desc")
-        .limit(200)
+        .where("createdAt", ">=", thirtyDaysAgo)
         .get();
       sessionsCount = sessionsSnap.size;
     } catch (e) {}
@@ -457,6 +487,7 @@ export default {
   saveSession,
   saveUserProgress,
   getAppAnalytics,
+  getCommunityAverages,
   getWeeklySessionData,
   COLLECTIONS,
 };

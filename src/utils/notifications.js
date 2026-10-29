@@ -25,6 +25,15 @@ export async function registerForPushNotifications() {
   return status;
 }
 
+// Uygulama içi "Bildirimler" toggle'ı açık olsa bile, kullanıcı iOS/Android
+// sistem ayarlarından izni kapatmış olabilir — bu durumda scheduleX
+// fonksiyonları sessizce "başarılı" döner ama bildirim hiç gösterilmez.
+// Profil ekranı bunu kontrol edip uyarı gösterebilsin diye eklendi.
+export async function getNotificationPermissionStatus() {
+  const { status } = await Notifications.getPermissionsAsync();
+  return status; // "granted" | "denied" | "undetermined"
+}
+
 // Sabit kimlikler: aynı identifier ile tekrar schedule edilen bir bildirim
 // öncekinin yerine geçer (expo-notifications bunu otomatik yapar). Bu iki
 // şeyi garanti eder:
