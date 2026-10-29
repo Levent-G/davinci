@@ -65,7 +65,8 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.502687781194-lu1rrn50f30f8ie2e1c1ffo6qd4n825b"
         }
-      ]
+      ],
+      "./plugins/withFmtConstevalFix.js"
     ],
     "extra": {
       "eas": {
