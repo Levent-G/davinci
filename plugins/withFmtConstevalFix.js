@@ -3,28 +3,29 @@
 // DÜZELTME: GitHub Actions'ın macOS runner'ındaki en güncel Xcode (26.x),
 // Firebase/Firestore'un gRPC bağımlılığı üzerinden gelen "fmt" kütüphanesiyle
 // derlenirken "consteval function ... is not a constant expression" hatası
-// veriyordu. Bu, fmt'nin C++20 `consteval` tabanlı derleme-zamanı format
-// string doğrulamasıyla, Xcode 26'nın daha sıkı Clang sürümü arasındaki
-// bilinen bir uyumsuzluk (EAS'ın kendi bulut build sunucuları daha eski/
-// sabitlenmiş bir Xcode kullandığı için bu sorunu hiç yaşamıyorduk).
+// veriyordu (EAS'ın kendi bulut build sunucuları daha eski/sabitlenmiş bir
+// Xcode kullandığı için bu sorunu hiç yaşamıyorduk).
 //
-// Çözüm: fmt'nin "FMT_CONSTEVAL" makrosunu BOŞ olarak önceden tanımlayarak
-// (derleyici ön işlemci tanımı ile) consteval kontrolünü devre dışı
-// bırakıyoruz — fmt kütüphanesinin kendisi bu makroyu "#ifndef" ile
-// koşullu tanımladığı için, önceden boş tanımlamak onu normal bir
-// constexpr/hiçbir şeye düşürüyor ve derleme hatası ortadan kalkıyor.
-// Bu SADECE "fmt" pod hedefine uygulanıyor, başka hiçbir şeyi etkilemiyor.
+// İLK DENEME (GCC_PREPROCESSOR_DEFINITIONS ile FMT_CONSTEVAL='' tanımlamak)
+// İŞE YARAMADI — demek ki fmt'nin asıl kontrol ettiği makro bu değilmiş.
+//
+// ASIL ÇÖZÜM: "consteval" zaten C++20'ye özel bir anahtar kelime — fmt
+// kütüphanesi, derleyicinin C++20 (ve üstü) modunda olup olmadığını
+// kontrol edip ancak o zaman consteval tabanlı derleme-zamanı format
+// string doğrulamasını devreye sokuyor. SADECE "fmt" pod hedefinin C++
+// standardını C++17'ye zorlayarak, bu kod yolu hiç derlenmiyor —
+// fmt kendi iç mantığıyla (feature-test makroları üzerinden) otomatik
+// olarak eski/consteval-olmayan moda düşüyor. Bu, kütüphanenin iç
+// makro isimlerini bilmeye gerek bırakmayan, derleyici seviyesinde
+// daha güvenilir bir çözüm.
 const { withPodfile } = require("@expo/config-plugins");
 
 const HOOK = `
   installer.pods_project.targets.each do |target|
     if target.name == 'fmt'
       target.build_configurations.each do |config|
-        defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS']
-        defs = ['$(inherited)'] if defs.nil?
-        defs = [defs] if defs.is_a?(String)
-        defs << 'FMT_CONSTEVAL='
-        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
+        config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'gnu++17'
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
       end
     end
   end
@@ -33,7 +34,7 @@ const HOOK = `
 module.exports = function withFmtConstevalFix(config) {
   return withPodfile(config, (config) => {
     const contents = config.modResults.contents;
-    if (contents.includes("FMT_CONSTEVAL")) {
+    if (contents.includes("CLANG_CXX_LANGUAGE_STANDARD'] = 'gnu++17'")) {
       return config; // zaten uygulanmış
     }
     if (contents.includes("post_install do |installer|")) {
