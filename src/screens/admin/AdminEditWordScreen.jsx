@@ -49,6 +49,9 @@ export default function AdminEditWordScreen({ navigation, route }) {
     category: word?.category || "",
     partOfSpeech: word?.partOfSpeech || "",
     level: word?.level || "A1",
+    // QORVEX (bulmaca) alanları — aynı `words` belgesinde tutulur
+    clue: word?.clue || "",
+    ipa: word?.ipa || "",
   });
   // Kelimenin Firestore'daki KALICI foto havuzu. Boşsa (kelime ilk kez
   // açılıyorsa) Pexels'ten çekilip bir daha hiç sorulmamak üzere Firestore'a
@@ -372,6 +375,22 @@ export default function AdminEditWordScreen({ navigation, route }) {
             />
           </View>
 
+          {/* QORVEX bulmaca alanları */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>QORVEX Bulmaca</Text>
+            <FormInput
+              label={`Bulmaca İpucu (${form.clue.length}/18)`}
+              value={form.clue}
+              onChangeText={(v) => update("clue", v)}
+              maxLength={18}
+            />
+            <FormInput
+              label="Okunuş (IPA)"
+              value={form.ipa}
+              onChangeText={(v) => update("ipa", v)}
+            />
+          </View>
+
           <View style={{ height: SPACING.xxxl }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -379,7 +398,7 @@ export default function AdminEditWordScreen({ navigation, route }) {
   );
 }
 
-function FormInput({ label, value, onChangeText, multiline }) {
+function FormInput({ label, value, onChangeText, multiline, maxLength }) {
   return (
     <View style={styles.fieldContainer}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -389,6 +408,7 @@ function FormInput({ label, value, onChangeText, multiline }) {
         onChangeText={onChangeText}
         placeholderTextColor={COLORS.textMuted}
         multiline={multiline}
+        maxLength={maxLength}
         numberOfLines={multiline ? 3 : 1}
       />
     </View>

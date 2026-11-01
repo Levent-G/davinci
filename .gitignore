@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Firebase servis hesabi anahtarlari asla commit edilmez
+*firebase-adminsdk*.json
+*service-account*.json

@@ -474,8 +474,12 @@ export function AppProvider({ children }) {
     },
 
     // Tüm kelimeleri getir: Firebase > lokal
+    // `words` koleksiyonu tüm projelerin ortak kelime kaynağı (bkz.
+    // docs/SHARED_WORDS.md); apps.davinci === false olanlar burada gizlenir.
     getAllWords: () => {
-      const fsWords = state.firestoreWords || [];
+      const fsWords = (state.firestoreWords || []).filter(
+        (w) => w.apps?.davinci !== false
+      );
       const custom = state.customWords || [];
       if (fsWords.length > 0) {
         return [...fsWords, ...custom];
