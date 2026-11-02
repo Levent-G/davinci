@@ -22,6 +22,8 @@ Firebase projesi `davinci-d30bc`, Firestore koleksiyonu `words`, bütün projele
 | `clue` | string (≤18) | QORVEX | Bulmaca ipucu. Boşsa kelime bulmacada kullanılmaz |
 | `qorvexPos` | string | QORVEX | Yalnızca bulmacadaki tür `partOfSpeech`'ten farklıysa |
 | `apps` | `{ [proje]: bool }` | ortak | `false` ise kelime o projede gizlenir. Alan yoksa kelime görünür |
+| `mergedInto` | string | ortak | Kayıt başka bir kayıtla birleştirildi (tekrar). Kayıt silinmez ama bütün projelerde gizlenir. davinci telefondaki ilerlemeyi bu kimliğe taşır |
+| `senseOf` | string | ortak | Aynı kelimenin farklı bir anlamı (örneğin address: hitap etmek). Ayrı kart olarak kalır, ana kayda bağlanır |
 | `source` | string | — | Kaydın kaynağı: `seed`, `admin` ya da `qorvex` |
 | `createdAt` / `updatedAt` | timestamp | — | Oluşturulma ve güncellenme zamanı |
 
@@ -30,6 +32,7 @@ Kurallar:
 - Projeye özel bir alan gerekiyorsa adı proje adıyla başlar (örneğin `qorvexPos`). Ortak alanın anlamı değiştirilmez.
 - Admin panelinde bir kelimenin seviyesi elle değiştirilirse `levelSource: 'admin'` yazılmalı. Böylece ileride CEFR'e göre yapılan güncellemeler bu seviyeyi ezmez.
 - Yeni bir proje bu koleksiyonu kullanmaya başladığında `apps.<proje>` bayrağıyla kelimeleri gizleyebilir.
+- Tekrar eden kayıtlar silinmez, `mergedInto` ile birleştirilir. Kullanıcı ilerlemesi ve eski uygulama sürümleri kayıt kimliğine bağlıdır. Yeni bir kelime eklemeden önce aynı kelimenin olup olmadığına bakılır. Varsa ve anlam aynıysa yeni kayıt açılmaz, mevcut kayda ek anlam yazılır. Anlam farklıysa yeni kayda `senseOf` yazılır.
 - Kullanıcı ilerlemesi kelime belgesinde tutulmaz. Her proje bunu kendi koleksiyonunda saklar (davinci için `userProgress`).
 
 ## Projeler

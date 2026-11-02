@@ -1,5 +1,6 @@
 // src/utils/storage.js
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getMasteryLevel } from "./davinciAlgorithm";
 
 const KEYS = {
   USER_PROFILE: "@davinci_user_profile",
@@ -76,6 +77,34 @@ export const Storage = {
     };
     Storage._writeQueue = Storage._writeQueue.then(run, run);
     return Storage._writeQueue;
+  },
+
+  // Ortak kelime veritabanında birleştirilen tekrar kayıtların (mergedInto)
+  // ilerlemesini ana kayda taşır. İkisinde de ilerleme varsa daha ileride
+  // olan kalır. aliases: { eskiId: anaId }. Değişiklik varsa yeni tüm
+  // ilerlemeyi, yoksa null döndürür.
+  async migrateMergedWords(aliases) {
+    const run = async () => {
+      try {
+        const all = await Storage.getWordProgress();
+        let moved = 0;
+        for (const [from, to] of Object.entries(aliases)) {
+          const p = all[from];
+          if (!p) continue;
+          if (!all[to] || getMasteryLevel(p) > getMasteryLevel(all[to])) all[to] = p;
+          delete all[from];
+          moved++;
+        }
+        if (!moved) return null;
+        await Storage.saveWordProgress(all);
+        return all;
+      } catch {
+        return null;
+      }
+    };
+    const job = Storage._writeQueue.then(run, run);
+    Storage._writeQueue = job;
+    return job;
   },
 
   // Özel kelimeler

@@ -89,6 +89,8 @@ function appReducer(state, action) {
         ...state,
         wordProgress: { ...state.wordProgress, ...action.payload },
       };
+    case "REPLACE_WORD_PROGRESS":
+      return { ...state, wordProgress: action.payload };
     case "UPDATE_WORD_PROGRESS":
       return {
         ...state,
@@ -170,6 +172,22 @@ export function AppProvider({ children }) {
   useEffect(() => {
     statsRef.current = state.stats;
   }, [state.stats]);
+
+  // Ortak veritabanında tekrar kayıtlar ana kayda birleştirildi (mergedInto).
+  // Telefondaki ilerleme eski kimlikte kaldıysa ana kayda taşınır.
+  useEffect(() => {
+    if (state.isLoading) return;
+    const aliases = {};
+    for (const w of state.firestoreWords || []) {
+      if (w.mergedInto) aliases[w.id] = w.mergedInto;
+    }
+    if (!Object.keys(aliases).length) return;
+    Storage.migrateMergedWords(aliases)
+      .then((all) => {
+        if (all) dispatch({ type: "REPLACE_WORD_PROGRESS", payload: all });
+      })
+      .catch(() => {});
+  }, [state.firestoreWords, state.isLoading]);
 
   useEffect(() => {
     async function loadInitialData() {
@@ -478,7 +496,7 @@ export function AppProvider({ children }) {
     // docs/SHARED_WORDS.md); apps.davinci === false olanlar burada gizlenir.
     getAllWords: () => {
       const fsWords = (state.firestoreWords || []).filter(
-        (w) => w.apps?.davinci !== false
+        (w) => w.apps?.davinci !== false && !w.mergedInto
       );
       const custom = state.customWords || [];
       if (fsWords.length > 0) {
