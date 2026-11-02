@@ -7,6 +7,7 @@ import AdminEditWordScreen from "../screens/admin/AdminEditWordScreen";
 import AdminUsersScreen from "../screens/admin/AdminUsersScreen";
 import AdminSubsScreen from "../screens/admin/AdminSubsScreen";
 import AdminAnalyticsScreen from "../screens/admin/AdminAnalyticsScreen";
+import AdminDraftsScreen from "../screens/admin/AdminDraftsScreen";
 
 const Stack = createStackNavigator();
 
@@ -22,6 +23,7 @@ export default function AdminNavigator() {
       <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
       <Stack.Screen name="AdminSubs" component={AdminSubsScreen} />
       <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
+      <Stack.Screen name="AdminDrafts" component={AdminDraftsScreen} />
     </Stack.Navigator>
   );
 }

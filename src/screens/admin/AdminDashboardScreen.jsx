@@ -106,6 +106,12 @@ export default function AdminDashboardScreen({ navigation }) {
       color: "#81C784",
       screen: "AdminAnalytics",
     },
+    {
+      icon: "📝",
+      label: "Taslak\nKelimeler",
+      color: "#F9CA24",
+      screen: "AdminDrafts",
+    },
   ];
 
   // Güvenlik ağı: admin menüsü zaten sadece allowlist'teki email'lere

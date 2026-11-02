@@ -73,6 +73,9 @@ export const COLLECTIONS = {
   USER_PROGRESS: "userProgress",
   SESSIONS: "sessions",
   ADMIN: "admin",
+  // Toplu içe aktarılan, henüz onaylanmamış kelimeler. Onaylanınca `words`
+  // koleksiyonuna taşınır; böylece eski uygulama sürümleri taslakları görmez.
+  WORD_DRAFTS: "wordDrafts",
 };
 
 /* ═══════════════════════════════════════════
@@ -284,6 +287,65 @@ export async function seedWordsToFirestore(words) {
     return true;
   } catch (e) {
     console.error("seedWords:", e);
+    return false;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   TASLAK KELİMELER (onay bekleyen içe aktarımlar)
+═══════════════════════════════════════════ */
+
+export async function getWordDrafts() {
+  try {
+    await ensureFirebaseReady();
+    const snap = await firestore().collection(COLLECTIONS.WORD_DRAFTS).get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    console.error("getWordDrafts:", e);
+    return null;
+  }
+}
+
+// Taslakları `words` koleksiyonuna taşır (aynı belge kimliğiyle) ve
+// taslak kaydını siler. Firestore toplu yazma sınırı için 200'lük gruplar.
+export async function approveWordDrafts(drafts) {
+  try {
+    await ensureFirebaseReady();
+    for (let i = 0; i < drafts.length; i += 200) {
+      const batch = firestore().batch();
+      for (const { id, draft, importBatch, ...data } of drafts.slice(i, i + 200)) {
+        batch.set(firestore().collection(COLLECTIONS.WORDS).doc(id), {
+          ...data,
+          createdAt: firestore.FieldValue.serverTimestamp(),
+          updatedAt: firestore.FieldValue.serverTimestamp(),
+        });
+        batch.delete(firestore().collection(COLLECTIONS.WORD_DRAFTS).doc(id));
+      }
+      await batch.commit();
+    }
+    return true;
+  } catch (e) {
+    console.error("approveWordDrafts:", e);
+    return false;
+  }
+}
+
+export async function deleteWordDraft(id) {
+  try {
+    await ensureFirebaseReady();
+    await firestore().collection(COLLECTIONS.WORD_DRAFTS).doc(id).delete();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function updateWordDraft(id, updates) {
+  try {
+    await ensureFirebaseReady();
+    await firestore().collection(COLLECTIONS.WORD_DRAFTS).doc(id).set(updates, { merge: true });
+    return true;
+  } catch (e) {
     return false;
   }
 }
