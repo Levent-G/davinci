@@ -168,7 +168,10 @@ export default function AdminEditWordScreen({ navigation, route }) {
     }
     setIsSaving(true);
     try {
-      const ok = await updateFirestoreWord(word.id, form);
+      // Elle değiştirilen seviye işaretlenir; CEFR'e göre toplu güncellemeler onu ezmez.
+      const updates =
+        form.level !== word?.level ? { ...form, levelSource: "admin" } : form;
+      const ok = await updateFirestoreWord(word.id, updates);
       if (!ok) throw new Error();
       await actions.refreshFirestoreWords();
       Alert.alert("✅ Kaydedildi", `"${form.word}" güncellendi!`, [
